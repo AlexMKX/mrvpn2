@@ -1,0 +1,58 @@
+
+- file:
+    path: "{{wg_target_dir}}"
+    state: directory
+    mode: 0755
+    recurse: yes
+
+- debug:
+    msg: "target dir {{wg_target_dir}}"
+- copy:
+    src: files/wireguard/
+    dest: "{{wg_target_dir}}"
+
+
+- name: "Provision compose file"
+  template:
+    src: templates/docker-compose.yml.j2
+    dest: "{{wg_compose_file}}"
+
+
+- name: "Generate interface configuration"
+  template:
+    src: templates/interface.conf.j2
+    dest: "{{wg_target_dir}}/interface/interface.conf"
+
+##todo: check why FRR config not generated
+#
+#- name: "Generate FRR configuration"
+#  template:
+#    src: templates/frr.conf.j2
+#    dest: "{{wg_target_dir}}/frr/frr.conf"
+#  when: False
+
+- name: "Generate peers configuration"
+  template:
+    src: templates/peer.conf.j2
+    dest: "{{wg_target_dir}}/peers/{{item.key}}.conf"
+  vars:
+    peer: "{{item.value}}"
+  with_items: "{{wg_interface['wg_config']['peers']| dict2items}}"
+
+- debug:
+    var: wg_interface
+- name: Starting compose stack
+  block:
+    - community.docker.docker_compose_v2:
+        files: "{{wg_compose_file}}"
+        project_src: "{{wg_target_dir}}"
+        state: absent
+    - community.docker.docker_compose_v2:
+        files: "{{wg_compose_file}}"
+        project_src: "{{wg_target_dir}}"
+        state: present
+        wait: yes
+
+  become: yes
+  when: wg_interface.autostart | default(false) == true
+

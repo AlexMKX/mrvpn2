@@ -1,0 +1,38 @@
+services:
+  {{wg_tunnel_name}}:
+    restart: unless-stopped
+    build:
+      context: {{wg_target_dir}}/wg-tunnel
+    cap_add:
+      - NET_ADMIN
+    sysctls:
+      - net.ipv4.conf.all.src_valid_mark=1
+    volumes:
+      - {{wg_target_dir}}/interface/interface.conf:/conf/interface/{{wg_tunnel_name}}.conf
+      - {{wg_target_dir}}/peers:/conf/peers
+    environment:
+       WG_INTERFACE: "{{wg_tunnel_name}}"
+{% if 'port' in wg_interface['wg_config'] and ((wg_interface['wg_config']['port'] | int(0)) > 0) %}
+    ports:
+      - {{wg_interface['wg_config']['port']}}:{{wg_interface['wg_config']['port']}}/udp
+{% endif %}
+{% if 'compose_service' in wg_interface %}
+    network_mode: "service:{{wg_interface['compose_service']}}"
+
+{% elif 'compose_network' in wg_interface %}
+    networks:
+        - {{wg_interface['compose_network']}}
+{% endif %}
+
+#  {{wg_tunnel_name}}_frr:
+#    restart: always
+#    cap_add:
+#      - CAP_NET_RAW
+#      - NET_ADMIN
+#      - SYS_ADMIN
+#    privileged: false
+#    image: quay.io/frrouting/frr:9.1.0
+#    network_mode: "service:{{wg_tunnel_name}}"
+#    volumes:
+#      - {{wg_target_dir}}/frr:/etc/frr:rw
+

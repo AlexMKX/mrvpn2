@@ -1,0 +1,65 @@
+# Description: This task is used to patch the main compose file with the list of compose files to include
+# Input facts:
+# compose_files: List of compose files to include
+# compose_file: (Optional) Path to the main compose file
+# compose_dir: (Optional) Directory containing the main compose file
+
+- name: Ensure either compose_file or compose_dir is specified
+  assert:
+    that:
+      - compose_file is defined or compose_dir is defined
+    fail_msg: "Either compose_file or compose_dir must be specified"
+
+- name: Set compose_file fact if not already defined
+  set_fact:
+    compose_file: "{{ compose_dir }}/docker-compose.yml"
+  when: compose_file is not defined and compose_dir is defined
+
+- name: Check for docker-compose.yaml if docker-compose.yml doesn't exist
+  set_fact:
+    compose_file: "{{ compose_dir }}/docker-compose.yaml"
+  when: 
+    - compose_file is not defined
+    - compose_dir is defined
+    - not (compose_dir + '/docker-compose.yml') is file
+
+- name: Check if compose file exists
+  stat:
+    path: "{{ compose_file }}"
+  register: compose_file_stat
+
+- name: Initialize empty compose file if it doesn't exist
+  copy:
+    content: "{}"
+    dest: "{{ compose_file }}"
+  when: not compose_file_stat.stat.exists
+
+- name: Retrieve main compose file content
+  slurp:
+    src: "{{ compose_file }}"
+  register: main_compose_file_content
+
+- name: Parse compose file content
+  set_fact:
+    original_compose: "{{ (main_compose_file_content.content | b64decode | from_yaml) if main_compose_file_content.content | default('') else {} }}"
+
+- name: Merge includes
+  set_fact:
+    merged_includes: "{{ ((original_compose.include | default([])) + (compose_files | default([]))) | unique }}"
+
+- name: Update compose content
+  set_fact:
+    updated_compose: "{{ original_compose | combine({'include': merged_includes}) }}"
+
+- name: Write updated compose file
+  copy:
+    dest: "{{ compose_file }}"
+    content: "{{ updated_compose | to_nice_yaml }}"
+
+- name: Unset temporary facts
+  set_fact:
+    original_compose: null
+    merged_includes: null
+    updated_compose: null
+    main_compose_file_content: null
+    compose_file_stat: null

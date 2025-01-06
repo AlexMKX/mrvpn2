@@ -1,0 +1,212 @@
+# installs Firezone
+# returns fz_main_compose_file - path to compose
+
+---
+- assert:
+    that: fz_admin_password is not defined or fz_admin_password|length>=12
+- name: Install wireguard and other packages
+  ansible.builtin.apt:
+    name:
+      - wireguard
+      - curl
+      - jq
+      - python-is-python3
+      - python3-pip
+      - python3-requests
+    state: present
+    update_cache: yes
+  become: yes
+- apt:
+    name: python3-netaddr
+    state: present
+  delegate_to: localhost
+  become: yes
+
+
+
+- name: Ensure firezone_dir exists
+  ansible.builtin.file:
+    path: "{{ fz_firezone_dir }}"
+    state: directory
+
+- stat:
+    path: "{{fz_main_compose_file}}"
+  register: fz_main_compose_file_stat
+
+- name: Stop stack
+  community.docker.docker_compose_v2:
+    project_src: "{{ fz_firezone_dir }}"
+    state: absent
+  when: fz_main_compose_file_stat['stat']['exists']
+
+- name: Uninstall stack
+  block:
+    - debug:
+        msg: "{{ansible_run_tags}}"
+    - community.docker.docker_compose_v2:
+        project_src: "{{ fz_firezone_dir }}"
+        state: absent
+        remove_orphans: yes
+        remove_volumes: yes
+      when: fz_main_compose_file_stat['stat']['exists']
+
+    - name: Remove firezone directory
+      ansible.builtin.file:
+        path: "{{ fz_firezone_dir }}"
+        state: absent
+  when: "'cleanup' in ansible_run_tags"
+
+
+- name: Ensure firezone_dir exists
+  ansible.builtin.file:
+    path: "{{ fz_firezone_dir }}"
+    state: directory
+
+- stat:
+    path: "{{fz_main_compose_file}}"
+  register: fz_main_compose_file_stat
+
+- name: Write env file
+  ansible.builtin.template:
+    dest: "{{ fz_firezone_dir }}/.env"
+    src: templates/firezone.env.j2
+
+- name: Write credentils env file
+  ansible.builtin.template:
+    dest: "{{ fz_firezone_dir }}/credentials.env"
+    src: templates/credentials.env.j2
+    force: no
+
+- name: Read credentials env file
+  ansible.builtin.slurp:
+    src: "{{ fz_firezone_dir }}/credentials.env"
+  register: credentials_env_content
+- name: Put credentials into env file
+  ansible.builtin.blockinfile:
+    content: "{{ credentials_env_content['content'] | b64decode }}"
+    dest: "{{ fz_firezone_dir }}/.env"
+
+- name: Write compose file
+  ansible.builtin.template:
+    dest: "{{ fz_firezone_dir }}/docker-compose.yml"
+    src: templates/docker-compose.yml.j2
+  register: fz_compose_file
+
+- name: Ensure stack is running
+  community.docker.docker_compose_v2:
+    project_src: "{{ fz_firezone_dir }}"
+    state: present
+    wait: yes
+
+  register: result
+
+- set_fact:
+    fz_firezone_container_id: "{{(result.containers | selectattr ('Service', 'equalto', 'firezone') | list | first)['ID']  }}"
+
+
+- name: Ensure admin account exists
+  community.docker.docker_container_exec:
+    container: "{{ fz_firezone_container_id }}"
+    command: "/app/bin/create-or-reset-admin"
+
+- name: Retrieve API token
+  community.docker.docker_container_exec:
+    container: "{{ fz_firezone_container_id }}"
+    command: bin/create-api-token
+  register: token_result
+
+- set_fact: fz_api_token={{ token_result['stdout_lines'][0] }}
+- block:
+    - name: Ensure configuration is retrievable
+      ansible.builtin.uri:
+        method: GET
+
+      register: config
+      until: config['status'] == 200
+      retries: 10
+
+
+    - name: Write API token to firezone directory
+      ansible.builtin.copy:
+        content: "{{ fz_api_token }}"
+        dest: "{{ fz_firezone_dir }}/fz-api-token"
+
+    - block:
+        - ansible.builtin.set_fact:
+            oidc_configs: [ ]
+        - ansible.builtin.set_fact:
+            oidc_configs: >
+              {{oidc_configs + [
+                {
+                  'name': item.key,
+                  'discovery_document_uri': item.value.discovery_document_uri| default ('https://accounts.google.com/.well-known/openid-configuration'),
+                  'client_id': item.value.client_id,
+                  'client_secret': item.value.client_secret,
+                  'redirect_uri': item.value.redirect_uri| default (fz_server_url+'/auth/oidc/'+item.key+'/callback'),
+                  'response_type': item.value.response_type| default ('code'),
+                  'scope': item.value.scope| default ('openid email profile'),
+                  'label': item.key,
+                  'id': item.key,
+                  'auto_create_users': true
+                }
+              ]}}
+          loop: "{{ fz_oidc | dict2items }}"
+        - ansible.builtin.set_fact:
+            openid:
+              openid_connect_providers: "{{ oidc_configs }}"
+
+        - ansible.builtin.set_fact:
+            configuration:
+              configuration: "{{ config.json.data | ansible.utils.remove_keys(target=['openid_connect_providers']) | combine(openid) }}"
+        - ansible.builtin.set_fact:
+            config: "{{ configuration }}"
+      when: fz_oidc is defined
+
+    - ansible.builtin.set_fact:
+        configuration: "{{ config }}"
+      when: fz_oidc is not defined
+    - ansible.builtin.set_fact:
+        config:
+          configuration: "{{ config }}"
+      when: fz_oidc is not defined
+
+    - ansible.builtin.set_fact:
+        config_logo:
+          configuration: "{{config['configuration']|ansible.utils.remove_keys(target=['logo'])| combine({'logo': {'url': fz_server_url + '/images/logo-text.svg','data':None, 'type':None } } )}}"
+
+    - name: Set OIDC configuration
+      ansible.builtin.uri:
+        method: PATCH
+        body: "{{ config_logo }}"
+  module_defaults:
+    ansible.builtin.uri:
+      url: "{{ fz_server_url }}/v0/configuration"
+      headers:
+        Authorization: Bearer {{ fz_api_token }}
+        Content-Type: application/json
+      body_format: json
+
+- name: Restarting stack
+  community.docker.docker_compose_v2:
+    project_src: "{{ fz_firezone_dir }}"
+    state: restarted
+    wait: yes
+
+- name: Shutting down the stack
+  community.docker.docker_compose_v2:
+    project_src: "{{ fz_firezone_dir }}"
+    state: absent
+    wait: yes
+
+- name: Clean up temporary facts
+  ansible.builtin.set_fact:
+    fz_firezone_container_id: null
+    fz_api_token: null
+    credentials_env_content: null
+    token_result: null
+    config: null
+    configuration: null
+    config_logo: null
+    oidc_configs: null
+    openid: null
+

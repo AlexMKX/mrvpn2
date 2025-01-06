@@ -1,0 +1,118 @@
+- name: Remove old configuration
+  include_tasks: mikrotik/cleanup.yml
+  tags: [ 'cleanup' ]
+  when: wg_interface is defined or "cleanup" in ansible_run_tags or wg_force_reconfig is defined
+
+- name: Configure interfaces
+  block:
+    - name: Add Wireguard Interface
+      community.routeros.api:
+        add: "name=\"{{wg_tunnel_name}}\" private-key=\"{{wg_interface.private}}\" comment=\"{{wg_tunnel_name}}\" mtu=1280"
+        path: interface wireguard
+
+    - name: Add IP address
+      community.routeros.api:
+        add: "address=\"{{wg_interface.address}}/24\" comment=\"{{wg_tunnel_name}}\" interface=\"{{wg_tunnel_name}}\""
+        path: ip address
+    - name: Query Wireguard Interfaces
+      community.routeros.api:
+        extended_query:
+          attributes:
+            - .id
+            - name
+          where:
+            - attribute: name
+              is: "=="
+              value: "{{wg_tunnel_name}}"
+        path: interface wireguard
+      register: interface_id
+    - set_fact:
+        interface_id: "{{interface_id.msg[0]['.id']}}"
+    - name: Add Peers
+      community.routeros.api:
+        add: >-
+          allowed-address="{{item.value.allowed_ips}}" interface="{{interface_id}}"
+          public-key="{{item.value.public}}"
+          comment="{{wg_tunnel_name}}"
+          preshared-key="{{item.value.psk}}"
+          {% if 'endpoint' in item.value.keys() %}
+          endpoint-address="{{item.value.endpoint.split(':')[0]}}"
+          endpoint-port="{{item.value.endpoint.split(':')[1]}}"
+          {% endif %}
+          persistent-keepalive=25
+
+        path: interface wireguard peers
+      loop: "{{wg_interface['peers'] | dict2items}}"
+    - debug:
+        var: wg_interface
+    - debug:
+        var: wg_interface['peers']
+    - name: Provision Mikrotik Routes
+      block:
+        - name: Build routes list
+          set_fact:
+            routes: "{{wg_interface['peers']| dict2items | json_query('[].value.allowed_nets[]') }}"
+        - debug:
+            var: routes
+        - name: Query Wireguard Interfaces
+          community.routeros.api:
+            extended_query:
+              attributes:
+                - .id
+                - name
+              where:
+                - attribute: name
+                  is: "=="
+                  value: "{{wg_interface['table']}}"
+            path: routing table
+          register: wg_mkt_tables
+        - name: Add Routing Table
+          community.routeros.api:
+            add: >-
+                name="{{wg_interface['table']}}"
+                fib="yes"
+                comment="Autocreated for {{wg_tunnel_name}}"
+            path: routing table
+          when: (wg_mkt_tables['msg'] | length) ==0
+
+        - name: Add Routes
+          community.routeros.api:
+            add: >-
+              dst-address="{{item}}"
+              gateway="{{wg_tunnel_name}}"
+              comment="{{wg_tunnel_name}}"
+              routing-table="{{wg_interface['table']}}"
+            path: ip route
+          loop: "{{routes}}"
+      when: '"table" in wg_interface'
+
+    - name: Add OSPF
+      community.routeros.api:
+        add: >-
+            disabled=no name=ospf-instance-{{wg_tunnel_name}} comment={{wg_tunnel_name}}
+            redistribute=connected router-id={{wg_interface.address}}
+        path: routing ospf instance
+    - name: Add OSPF Area
+      community.routeros.api:
+        add: >-
+            disabled=no instance=ospf-instance-{{wg_tunnel_name}} comment={{wg_tunnel_name}}
+            name=ospf-area-{{wg_tunnel_name}} nssa-translator=candidate
+        path: routing ospf area
+    - name: Add OSPF interface template
+      community.routeros.api:
+        add: >-
+            area=ospf-area-{{wg_tunnel_name}} disabled=no interfaces={{wg_tunnel_name}}
+            comment={{wg_tunnel_name}} type=ptp
+        path: routing ospf interface-template
+
+    - name: Add MSS Pinning
+      community.routeros.api:
+        add: >-
+            action=change-mss
+            comment="{{wg_tunnel_name}}"
+            chain=forward disabled=no log=no log-prefix="" new-mss=clamp-to-pmtu
+            out-interface="{{wg_tunnel_name}}" passthrough=no protocol=tcp tcp-flags=syn
+        path: ip firewall mangle
+
+  when: (wg_interface is defined or wg_force_reconfig is defined) and "cleanup" not in ansible_run_tags
+

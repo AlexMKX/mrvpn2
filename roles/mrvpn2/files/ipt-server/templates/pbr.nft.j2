@@ -1,0 +1,15 @@
+table ip ipt_server_pbr {
+	set private_subnets {
+		typeof ip daddr
+		flags interval
+		auto-merge
+		elements = { 10.0.0.0/8, 100.64.0.0/10,
+			     172.16.0.0/12, 192.168.0.0/16 }
+	}
+
+	chain {{interface}} {
+		type filter hook prerouting priority -200; policy accept;
+		iifname "{{interface}}" ip daddr != @private_subnets counter meta mark set 0x00000200
+        iifname "{{interface}}" ip daddr != @private_subnets counter ct mark set 0x00000200
+	}
+}

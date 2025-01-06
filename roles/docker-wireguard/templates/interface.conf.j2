@@ -1,0 +1,15 @@
+[Interface]
+PrivateKey = {{wg_interface['wg_config']['private']}}
+Address = {{wg_interface['wg_config']['address']}}/24
+MTU = 1280
+{% if 'port' in wg_interface['wg_config'] and (wg_interface['wg_config']['port'] | int (0)>0) %}
+ListenPort = {{wg_interface['wg_config']['port']}}
+{% endif %}
+{% if 'table' in wg_interface %}
+Table = {{wg_interface['table']}}
+{% endif %}
+
+{% if 'masquerade' in wg_interface and wg_interface['masquerade'] %}
+PostUp = nft add table ip {{wg_tunnel_name}}_nat; nft add chain ip {{wg_tunnel_name}}_nat postrouting { type nat hook postrouting priority 100 \; }; nft add rule ip {{wg_tunnel_name}}_nat postrouting iifname "{{wg_tunnel_name}}" counter masquerade
+PostDown = nft flush table {{wg_tunnel_name}}_nat; nft delete table ip {{wg_tunnel_name}}_nat
+{% endif %}

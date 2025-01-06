@@ -1,0 +1,38 @@
+- assert:
+    that:
+      - wg_tunnel_name is defined
+      - wg_tunnel_config is defined
+      - wg_tunnel_name| length > 0
+      - wg_tunnel_name| length < 16
+    quiet: yes
+
+
+- block:
+    - apt:
+        name: wireguard-tools
+        state: present
+        update_cache: false
+      become: yes
+      ignore_errors: yes
+      register: apt_result
+    - apt:
+        name: wireguard-tools
+        state: present
+        update_cache: yes
+      become: yes
+      when: apt_result.failed
+    - wg_build_config:
+        tunnel: "{{wg_tunnel_config}}"
+        hostvars: "{{ hostvars }}"
+      register: wg_tunnel_built
+    - set_fact:
+        wg_tunnel_result: "{{wg_tunnel_result | combine({wg_tunnel_name:wg_tunnel_built.result}) }}"
+  name: Building tunnel configuration
+- include_tasks: provision_main.yml
+  vars:
+    wg_inventory_host: "{{loop_host}}"
+  loop_control:
+    loop_var: loop_host
+  loop: "{{wg_tunnel_result[wg_tunnel_name].hosts.keys() }}"
+
+#todo: add check that autostart is allowed only if there is no service key is defined

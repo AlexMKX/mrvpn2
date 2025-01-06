@@ -1,0 +1,12 @@
+dnssec:
+  log_bogus: true
+incoming:
+  listen:
+    - 0.0.0.0:5301
+recursor:
+  extended_resolution_errors: true
+  lua_dns_script: /etc/powerdns/hook.lua
+  
+logging:
+  loglevel: 7
+  trace: yes

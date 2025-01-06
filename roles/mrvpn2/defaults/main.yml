@@ -1,0 +1,5 @@
+---
+# defaults file for mrvpn2
+mrvpn_root: /opt/mrvpn
+mrvpn_svcs_root: "{{mrvpn_root}}/mrvpn"
+mrvpn_config:

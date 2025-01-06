@@ -1,0 +1,51 @@
+# Description: This playbook is responsible for creating the compose service files for the mrvpn services (ipt, pdns, frr)
+# inputs: mrvpn_config, svcs, mrvpn_root
+# outputs: compose_svc_files - contain list of compose files to include
+# svcs - contain map : compose service and interface list
+# example:
+# firezone:
+#   - wg-firezone
+#   - wg_outer
+
+- name: Assert mrvpn_config is not empty and has routing key
+  assert:
+    that:
+      - mrvpn_config is defined
+      - mrvpn_config | length > 0
+      - "'routing' in mrvpn_config"
+      - "'services' in mrvpn_config"
+    fail_msg: "mrvpn_config must be defined, non-empty, and contain a 'routing' and 'services' keys"
+- set_fact:
+    cacheable: no
+    mrvpn_svcs_root: "{{mrvpn_root}}/mrvpn"
+
+
+- name: Synchronize Services files
+  copy:
+    src: "{{item}}"
+    dest: "{{mrvpn_svcs_root}}/"
+  with_items:
+    - "files/powerdns"
+    - "files/ipt-server"
+    - "files/frr"
+
+- copy:
+    content: "{{mrvpn_config['routing'] | to_yaml}}"
+    dest: "{{mrvpn_svcs_root}}/ipt-server-config.yml"
+  register: ipt_server_config_file
+
+- template:
+    src: "templates/frr.conf.j2"
+    dest: "{{mrvpn_svcs_root}}/frr/frr.conf"
+
+- copy:
+    content: "{{lookup ('template','templates/compose_svc.yml.j2') }}"
+    dest: "{{mrvpn_svcs_root}}/compose_{{item.key}}_svc.yml"
+  with_dict: "{{mrvpn_config['services']}}"
+
+
+
+- name: Create list of compose service file paths
+  set_fact:
+    cacheable: no
+    compose_svcs_files: "{{ mrvpn_config['services'].keys() | map('regex_replace', '^(.*)$', mrvpn_svcs_root + '/compose_\\1_svc.yml') | list }}"
