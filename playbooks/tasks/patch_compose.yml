@@ -43,9 +43,16 @@
   set_fact:
     original_compose: "{{ (main_compose_file_content.content | b64decode | from_yaml) if main_compose_file_content.content | default('') else {} }}"
 
+- name: Validate main compose file structure
+  assert:
+    that:
+      - original_compose.include is not defined or (original_compose.include | length == 1 and original_compose.include[0].path is defined)
+    fail_msg: "The main compose file should have a single 'include' entry with a single 'path' key"
+
 - name: Merge includes
   set_fact:
-    merged_includes: "{{ ((original_compose.include | default([])) + (compose_files | default([]))) | unique }}"
+    merged_includes:
+      - path: "{{ ((original_compose.include[0].path | default([])) + (compose_files | default([]))) | unique }}"
 
 - name: Update compose content
   set_fact:

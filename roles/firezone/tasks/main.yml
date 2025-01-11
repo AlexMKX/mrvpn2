@@ -4,25 +4,6 @@
 ---
 - assert:
     that: fz_admin_password is not defined or fz_admin_password|length>=12
-- name: Install wireguard and other packages
-  ansible.builtin.apt:
-    name:
-      - wireguard
-      - curl
-      - jq
-      - python-is-python3
-      - python3-pip
-      - python3-requests
-    state: present
-    update_cache: yes
-  become: yes
-- apt:
-    name: python3-netaddr
-    state: present
-  delegate_to: localhost
-  become: yes
-
-
 
 - name: Ensure firezone_dir exists
   ansible.builtin.file:

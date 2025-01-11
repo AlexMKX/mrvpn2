@@ -12,16 +12,29 @@ services:
       - {{wg_target_dir}}/peers:/conf/peers
     environment:
        WG_INTERFACE: "{{wg_tunnel_name}}"
+
+{% if 'compose_service' in wg_interface %}
+    network_mode: "service:{{wg_interface['compose_service']}}"
+
+{%else%}
 {% if 'port' in wg_interface['wg_config'] and ((wg_interface['wg_config']['port'] | int(0)) > 0) %}
     ports:
       - {{wg_interface['wg_config']['port']}}:{{wg_interface['wg_config']['port']}}/udp
 {% endif %}
-{% if 'compose_service' in wg_interface %}
-    network_mode: "service:{{wg_interface['compose_service']}}"
-
-{% elif 'compose_network' in wg_interface %}
+{% if 'compose_network' in wg_interface %}
     networks:
         - {{wg_interface['compose_network']}}
+{% endif %}
+{% endif %}
+
+{% if 'compose_service' in wg_interface %}
+{% if 'port' in wg_interface['wg_config'] and ((wg_interface['wg_config']['port'] | int(0)) > 0) %}
+  {{wg_interface['compose_service']}}:
+    ports:
+      - {{wg_interface['wg_config']['port']}}:{{wg_interface['wg_config']['port']}}/udp
+{% endif %}
+
+
 {% endif %}
 
 #  {{wg_tunnel_name}}_frr:

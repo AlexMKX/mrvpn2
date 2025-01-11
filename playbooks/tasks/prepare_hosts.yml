@@ -1,0 +1,40 @@
+- name: Get all hosts from all tunnels
+  set_fact:
+    all_tunnel_hosts: "{{ mrvpn_config['tunnels'] | dict2items | map(attribute='value.hosts') | list }}"
+
+- name: Flatten hosts dictionary
+  set_fact:
+    flattened_hosts: "{{ flattened_hosts | default({}) | combine(item) }}"
+  loop: "{{ all_tunnel_hosts }}"
+- set_fact:
+    prepare_hosts: | 
+        {{((flattened_hosts | dict2items | map (attribute='key') | list )  
+        + [mrvpn_config['entrypoint']]) | unique }}
+- include_role:
+    name: geerlingguy.docker
+    apply:
+      delegate_to: "{{item}}"
+  loop: "{{ prepare_hosts }}"
+- set_fact:
+    packages_to_install:
+      - rsync
+      - wireguard
+      - python3-pip
+      - wireguard-tools
+      - python3-paramiko
+      - python3-jmespath
+      - curl
+      - jq
+      - python-is-python3
+      - python3-netaddr
+- apt:
+    name: "{{packages_to_install}}"
+    update_cache: true
+  delegate_to: "{{item}}"
+  loop: "{{ prepare_hosts }}"
+  become: yes
+- apt:
+    name: "{{packages_to_install}}"
+    state: present
+  delegate_to: localhost
+  become: yes

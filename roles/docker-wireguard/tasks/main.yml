@@ -8,19 +8,6 @@
 
 
 - block:
-    - apt:
-        name: wireguard-tools
-        state: present
-        update_cache: false
-      become: yes
-      ignore_errors: yes
-      register: apt_result
-    - apt:
-        name: wireguard-tools
-        state: present
-        update_cache: yes
-      become: yes
-      when: apt_result.failed
     - wg_build_config:
         tunnel: "{{wg_tunnel_config}}"
         hostvars: "{{ hostvars }}"

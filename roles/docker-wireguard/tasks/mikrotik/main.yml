@@ -1,18 +1,17 @@
 - name: Remove old configuration
   include_tasks: mikrotik/cleanup.yml
-  tags: [ 'cleanup' ]
-  when: wg_interface is defined or "cleanup" in ansible_run_tags or wg_force_reconfig is defined
+
 
 - name: Configure interfaces
   block:
     - name: Add Wireguard Interface
       community.routeros.api:
-        add: "name=\"{{wg_tunnel_name}}\" private-key=\"{{wg_interface.private}}\" comment=\"{{wg_tunnel_name}}\" mtu=1280"
+        add: "name=\"{{wg_tunnel_name}}\" private-key=\"{{wg_interface['wg_config']['private']}}\" comment=\"{{wg_tunnel_name}}\" mtu=1280"
         path: interface wireguard
 
     - name: Add IP address
       community.routeros.api:
-        add: "address=\"{{wg_interface.address}}/24\" comment=\"{{wg_tunnel_name}}\" interface=\"{{wg_tunnel_name}}\""
+        add: "address=\"{{wg_interface['wg_config']['address']}}/24\" comment=\"{{wg_tunnel_name}}\" interface=\"{{wg_tunnel_name}}\""
         path: ip address
     - name: Query Wireguard Interfaces
       community.routeros.api:
@@ -42,7 +41,7 @@
           persistent-keepalive=25
 
         path: interface wireguard peers
-      loop: "{{wg_interface['peers'] | dict2items}}"
+      loop: "{{wg_interface['wg_config']['peers'] | dict2items}}"
     - debug:
         var: wg_interface
     - debug:
@@ -51,7 +50,7 @@
       block:
         - name: Build routes list
           set_fact:
-            routes: "{{wg_interface['peers']| dict2items | json_query('[].value.allowed_nets[]') }}"
+            routes: "{{wg_interface['wg_config']['peers']| dict2items | json_query('[].value.allowed_nets[]') }}"
         - debug:
             var: routes
         - name: Query Wireguard Interfaces
@@ -90,7 +89,7 @@
       community.routeros.api:
         add: >-
             disabled=no name=ospf-instance-{{wg_tunnel_name}} comment={{wg_tunnel_name}}
-            redistribute=connected router-id={{wg_interface.address}}
+            redistribute=connected router-id={{wg_interface['wg_config'].address}}
         path: routing ospf instance
     - name: Add OSPF Area
       community.routeros.api:

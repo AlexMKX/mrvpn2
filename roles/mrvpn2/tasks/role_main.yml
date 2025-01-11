@@ -1,0 +1,83 @@
+
+- name: Shutdown compose services
+  community.docker.docker_compose_v2:
+    project_src: "{{mrvpn_root}}"
+    state: absent
+    remove_orphans: yes
+  failed_when: false
+  delegate_to: "{{mrvpn_config['entrypoint']}}"
+  tags: always
+- block:
+    - include_role:
+        name: alexmkx.mrvpn2.firezone
+      vars:
+        fz_config: "{{mrvpn_config['firezone']}}"
+        fz_firezone_dir: "{{mrvpn_root}}/firezone"
+    - set_fact:
+        fz_main_compose_file: "/opt/mrvpn/firezone/docker-compose.yml"
+    - include_tasks:
+        file: ../../../playbooks/tasks/patch_compose.yml
+      vars:
+        compose_dir: "{{mrvpn_root}}"
+        compose_files:
+          - "{{fz_main_compose_file}}"
+  delegate_to: "{{mrvpn_config['entrypoint']}}"
+  tags: firezone
+#  when: false
+
+- block:
+    - include_role:
+        name: docker-wireguard
+      vars:
+        wg_tunnel_config: "{{mrvpn_config['tunnels'][mrvpn_tunnel_name]}}"
+        wg_tunnel_name: "{{mrvpn_tunnel_name}}"
+        wg_root_dir: "/opt/mrvpn/wg_tunnels"
+      loop_control:
+        loop_var: mrvpn_tunnel_name
+      loop: "{{mrvpn_config['tunnels'].keys()}}"
+
+    - name: Extract compose file paths for the current host
+      set_fact:
+        entrypoint_compose_files: >-
+          {{ wg_tunnel_result | dict2items |
+             map(attribute='value.hosts') |
+             map('dict2items') |
+             flatten |
+             selectattr('key', 'equalto', mrvpn_config['entrypoint']) |
+             map(attribute='value.compose_file') |
+             list }}
+    - block:
+        - include_tasks:
+            file: ../../../playbooks/tasks/patch_compose.yml
+          vars:
+            compose_dir: "{{mrvpn_root}}"
+            compose_files: "{{entrypoint_compose_files}}"
+      delegate_to: "{{mrvpn_config['entrypoint']}}"
+      when: entrypoint_compose_files | length > 0
+  tags: tunnels
+- block:
+    - include_tasks:
+        file: compose_svcs.yml
+    - include_tasks:
+        file: ../../../playbooks/tasks/patch_compose.yml
+      vars:
+        compose_dir: "{{mrvpn_root}}"
+        compose_files: "{{compose_svcs_files}}"
+  delegate_to: "{{mrvpn_config['entrypoint']}}"
+  tags: services
+
+- name: Shutdown compose services
+  community.docker.docker_compose_v2:
+    project_src: "{{mrvpn_root}}"
+    state: absent
+    remove_orphans: yes
+    wait: yes
+  delegate_to: "{{mrvpn_config['entrypoint']}}"
+  tags: always
+- name: Start compose services
+  community.docker.docker_compose_v2:
+    project_src: "{{mrvpn_root}}"
+    state: present
+    wait: yes
+  delegate_to: "{{mrvpn_config['entrypoint']}}"
+  tags: always
