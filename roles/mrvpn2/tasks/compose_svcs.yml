@@ -40,7 +40,7 @@
 
 - copy:
     content: "{{lookup ('template','templates/compose_svc.yml.j2') }}"
-    dest: "{{mrvpn_svcs_root}}/compose_{{item.key}}_svc.yml"
+    dest: "{{mrvpn_svcs_root}}/compose_{{item}}_svc.yml"
   with_dict: "{{mrvpn_config['services']}}"
 
 

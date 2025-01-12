@@ -1,3 +1,8 @@
+- community.routeros.command:
+    commands: "{{wg_interface['mikrotik_cleanup']}}"
+  delegate_to: "{{wg_inventory_host}}"
+  when: "'mikrotik_cleanup' in wg_interface"
+
 - name: Find Mikrotik entities
   community.routeros.api:
     extended_query:
