@@ -1,7 +1,7 @@
 #FROM powerdns/pdns-recursor-50:5.0.1
 FROM powerdns/pdns-recursor-53
 USER root
-RUN apt update && apt install -y iproute2 nftables sudo sed lua-http lua-cjson lua-posix jq
+RUN apt update && apt install -y iproute2 nftables sudo sed lua-http lua-cjson lua-posix jq curl
 COPY docker-entrypoint.sh /
 COPY doh-ipv4.txt /
 RUN chmod +x /docker-entrypoint.sh & \

@@ -7,6 +7,6 @@ recursor:
   extended_resolution_errors: true
   lua_dns_script: /etc/powerdns/hook.lua
   
-logging:
-  loglevel: 7
-  trace: yes
+#logging:
+#  loglevel: 7
+#  trace: yes

@@ -74,8 +74,10 @@
     wait: yes
   delegate_to: "{{mrvpn_config['entrypoint']}}"
   tags: always
-- name: Start compose services
+- name: Pull, build and start compose services
   community.docker.docker_compose_v2:
+    build: always
+    pull: always
     project_src: "{{mrvpn_root}}"
     state: present
     wait: yes
