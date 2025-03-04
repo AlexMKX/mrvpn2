@@ -1,7 +1,7 @@
 from functools import wraps
 import time
 import logging
-import ipaddress
+from contextlib import contextmanager
 
 
 def timeit(func):
@@ -19,15 +19,10 @@ def timeit(func):
     return timeit_wrapper
 
 
-def is_ipv4(ip):
-    """
-    Check if a given IP address is a valid IPv4 address.
-
-    :param ip: The IP address to be checked.
-    :return: True if the IP address is a valid IPv4 address, False otherwise.
-    """
-    try:
-        ipaddress.IPv4Address(ip)
-        return True
-    except ipaddress.AddressValueError:
-        return False
+@contextmanager
+def TimeMeasure(description: str):
+    start_time = time.perf_counter()
+    yield
+    end_time = time.perf_counter()
+    duration = end_time - start_time
+    logging.info(f"{description} took {duration:.4f} seconds")

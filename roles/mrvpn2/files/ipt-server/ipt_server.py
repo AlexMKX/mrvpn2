@@ -1,168 +1,181 @@
-import logging
-import sqlite3
-import tempfile
-
 from pyroute2 import IPRoute
+import json
+import logging, os
+import dns_records
+import signal
 
-import gzip, urllib, csv, io, datetime, re, ipaddress
+if not logging.getLogger().handlers:
+    logging_level = os.environ.get('LOGLEVEL', 'INFO').upper()
+    logging.basicConfig(
+        level=getattr(logging, logging_level, logging.INFO),
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
 
-from Config import MySettings, State
-from MrRoute import MrRoute
-from typing import Dict, Set, Any, List
+import nftables
 
+from Config import MySettings
+from Router import Router
+import jinja2
 import websockets
 import asyncio
-import subprocess
-from collections import defaultdict
-import concurrent.futures
 from lib import *
-import random
-import urllib.request
-
-logging.basicConfig(level=logging.DEBUG)
-
-DEFAULT_METRIC = 100
-ALL_METRICS = set()
 
 CONFIG: MySettings
-ROUTES: List[MrRoute] = []
+ROUTER: Router
 
 logger = logging.getLogger(__name__)
 
 
-def get_request(l_url) -> urllib.request.Request:
-    buster = random.Random().randint(1, 1000000)
-    if -1 != l_url.find('?'):
-        l_url = l_url + f"&buster_{buster}"
-    else:
-        l_url = l_url + f"?buster_{buster}"
-    return urllib.request.Request(
-        l_url,
-        data=None,
-        headers={
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_3) '
-                          'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/35.0.1916.47 Safari/537.36'
-        }
-    )
-
-
-def process_ipdb(state: State, cfg: MySettings):
-    outdated = False
-    with sqlite3.connect(cfg.db) as conn:
-        conn.execute("CREATE TABLE IF NOT EXISTS ip_db (start, end, country)")
-        cursor = conn.cursor()
-        cursor.execute("SELECT count(1) FROM ip_db")
-        rows = cursor.fetchall()
-        if rows[0][0] == 0:
-            logger.info("No dbip data found")
-            outdated = True
-    now = datetime.datetime.now()
-    if not outdated:
-        if state.updated.year != now.year or state.updated.month != now.month:
-            logger.info("dbip data outdated")
-            outdated = True
-
-    if not outdated:
-        outdated = (now - state.updated) > datetime.timedelta(days=7)
-    if outdated:
-        logger.info("Updating dbip data")
-        d = "{:%Y-%m}".format(datetime.datetime.now())
-        url = f"https://download.db-ip.com/free/dbip-country-lite-{d}.csv.gz"
-        with urllib.request.urlopen(get_request(url)) as f:
-            nets = []
-            g = gzip.GzipFile(fileobj=io.BytesIO(f.read()), mode='r')
-            subnets = list(csv.reader(g.read().decode('utf-8').splitlines()))
-            for subnet in subnets:
-                nets.append({
-                    "start": subnet[0],
-                    "end": subnet[1],
-                    "country": subnet[2]
-                })
-            with sqlite3.connect(cfg.db) as conn:
-                conn.execute("DELETE from ip_db where True")
-                conn.executemany("INSERT INTO ip_db VALUES (?, ?, ?)",
-                                 [(n['start'], n['end'], n['country']) for n in nets])
-                conn.commit()
-                state.updated = now
-
-
-@timeit
-def loadConfig(cfg) -> List[MrRoute]:
-    """
-    Load the configuration from a database and populate the routes configuration.
-
-    :return: None
-    """
-
-    n = []
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        futures = {executor.submit(MrRoute, r, cfg): r for r in cfg.routes}
-    for f in concurrent.futures.as_completed(futures):
-        if f.exception() is not None:
-            logging.exception(f"Failed to load route {futures[f]}", exc_info=f.exception())
-        else:
-            n.append(f.result())
-    return n
-
-
 def apply_pbr():
-    import jinja2, tempfile
-    logging.debug(f"Applying PBR")
-    subprocess.check_call(f'ip rule add fwmark 0x{CONFIG.pbr_mark} table {CONFIG.table}', shell=True)
-    with open("templates/pbr.nft.j2") as f:
-        t = jinja2.Template(f.read())
-    for i in CONFIG.interfaces:
-        logging.debug(f'PBR for {i}')
-        ruleset = tempfile.mktemp(prefix=f"pbr_{i}", suffix=".nft")
-        with open(ruleset, "w") as f:
-            f.write(t.render(interface=i, mark=CONFIG.pbr_mark, table=CONFIG.table))
-        logging.info(f'PBR ruleset {ruleset}')
-        subprocess.check_call(f'nft -f {ruleset}', shell=True)
+    """
+    Applies PBR (Policy-Based Routing) rules:
+      1. Flushes the specified routing table.
+      2. Removes existing rules for the specified table.
+      3. Adds an IP rules (using pyroute2.IPRoute).
+   """
+    logging.debug("Applying PBR")
+    clean_pbr()
+    with IPRoute() as ipr:
+
+        try:
+            ipr.rule("add", fwmark=CONFIG.pbr_mark, table=CONFIG.table)
+            logging.info(f"Added ip rule: fwmark=0x{CONFIG.pbr_mark:x}, table={CONFIG.table}")
+        except Exception as e:
+            logging.error(f"Error adding ip rule: {e}")
+            raise
+    env = jinja2.Environment(loader=jinja2.FileSystemLoader('.'))
+    env.filters['hex'] = lambda x: format(x, 'x')
+
+    # Load the template from the environment
+    template = env.get_template('templates/pbr.nft.j2')
+
+    # For each interface, render the rules and apply them through the nftables API
+    # Add table
+
+    nft = nftables.Nftables()
+    logging.debug(f"Rendering PBR for all interfaces: {CONFIG.interfaces}")
+
+    rendered_ruleset = template.render(
+        config=CONFIG)  # interfaces=CONFIG.interfaces, mark=CONFIG.pbr_mark, table=CONFIG.table)
+    rc, output, error = nft.cmd(rendered_ruleset)
+    if rc != 0:
+        logging.error(f"Error applying NFT rules: {error} {rendered_ruleset}")
+        raise Exception(f"Error applying NFT rules: {error} {rendered_ruleset}")
+    logging.info("Applied NFT rules successfully")
+
+    # Create a Jinja2 environment with the custom filter
 
 
-def remove_pbr():
-    subprocess.check_call(f'ip rule del fwmark 0x{CONFIG.pbr_mark} table {CONFIG.table}', shell=True)
-    for i in CONFIG.interfaces:
-        subprocess.check_call(f'nft flush table ipt_server_pbr', shell=True)
-        subprocess.check_call(f'nft delete table ipt_server_pbr', shell=True)
+def clean_pbr():
+    nft = nftables.Nftables()
+    nft.set_json_output(True)
+    nft.set_handle_output(False)
+    nft.set_terse_output(True)
+    rc, output, error = nft.cmd("list tables")
+    pbr_table = [x for x in output['data'] if 'table' in x.keys() and x['table']['name'] == 'ipt_server_pbr']
+    if len(pbr_table) > 0:
+        nft.cmd("delete table ipt_server_pbr")
+    with IPRoute() as ipr:
+        try:
+
+            # Get existing rules for the specified table
+            for x in range(0, len(ipr.get_rules(table=CONFIG.table))):
+                # Remove the rule
+                ipr.rule('del', table=CONFIG.table)
+            logging.info(f"Removed existing rules for table {CONFIG.table}")
+            if len(ipr.get_rules(table=CONFIG.table)) > 0:
+                logging.warning(f"Unable to remove all existing rules for table {CONFIG.table}")
+            # Flush the routing table
+            ipr.flush_routes(table=CONFIG.table)
+            logging.info(f"Flushed routing table {CONFIG.table}")
+        except Exception as e:
+            logging.error(f"Error flushing table or removing existing rules: {e}")
 
 
 def main():
-    global CONFIG, ROUTES
-    CONFIG = MySettings.load("settings.yaml")
-    st = State.load(CONFIG)
-    process_ipdb(st, CONFIG)
-    ROUTES = loadConfig(CONFIG)
-    apply_pbr()
+    global CONFIG, ROUTER
+    config_file = os.getenv("CONFIG", "settings.yaml")
+    CONFIG = MySettings.load(config_file)
     logging.debug(f"Loading config")
+    apply_pbr()
+    ROUTER = Router(CONFIG)
 
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        executor.map(MrRoute.sync_subnets, ROUTES)
-
-    asyncio.run(async_main())
+    try:
+        asyncio.run(async_main())
+    except KeyboardInterrupt:
+        logging.info("Received keyboard interrupt, shutting down...")
+    finally:
+        # Ensure cleanup happens even if asyncio.run fails
+        logging.info("Exiting application")
 
 
 def process_a_record(record):
-    global ROUTES
-    # todo: add ip route flush cache if route added
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        for r in ROUTES:
-            executor.submit(r.on_a_record, record)
+    """
+    record format: {'query': 'microsoft.com.', 'content': '20.236.44.162', 'name': 'microsoft.com.', 'type': 1}
+    """
+    global ROUTER
+    ROUTER.on_a_record(dns_records.ARecord(record))
 
 
-async def echo(websocket):
+async def echo(websocket: websockets.ServerConnection) -> None:
+    """
+    Handle WebSocket connections and process incoming messages.
+
+    Message format: {'query': 'microsoft.com.', 'content': '20.236.44.162', 'name': 'microsoft.com.', 'type': 1}
+    """
     async for message in websocket:
-        import json
-        msg = json.loads(message)
-        logging.debug(f"Got message {msg}")
-        if msg['type'] == 1:
-            process_a_record(msg)
-        await websocket.send("OK")
+        try:
+            msg = json.loads(message)
+            logging.debug(f"Got message {msg}")
+            if msg['type'] == 1:
+                process_a_record(msg)
+            await websocket.send("OK")
+        except json.JSONDecodeError:
+            logging.error(f"Invalid JSON received: {message}")
+            await websocket.send("Error: Invalid JSON")
+        except Exception as e:
+            logging.error(f"Error processing message: {e}")
+            await websocket.send("Error: Message processing failed")
+
+
+async def shutdown(sig, stop_event):
+    """Cleanup tasks tied to the service's shutdown."""
+    logging.info(f"Received exit signal {sig.name}")
+    stop_event.set()
 
 
 async def async_main():
-    async with websockets.serve(echo, "0.0.0.0", CONFIG.ws_port, ping_timeout=30, ping_interval=30):
-        await asyncio.Future()  # run forever
+    # Create a task that can be cancelled
+    stop_event = asyncio.Event()
+    loop = asyncio.get_running_loop()
+
+    # Use asyncio's signal handler
+    for sig in [signal.SIGINT, signal.SIGTERM]:
+        loop.add_signal_handler(
+            sig,
+            lambda s=sig: asyncio.create_task(shutdown(s, stop_event))
+        )
+
+    # Start the websocket server
+    server = await websockets.serve(echo, "0.0.0.0", CONFIG.ws_port, ping_timeout=30, ping_interval=30)
+
+    try:
+        # Instead of just waiting on the event, create a periodic task that checks the event
+        # This ensures the event loop keeps running and can process signals
+        while not stop_event.is_set():
+            # Short sleep to allow other tasks and signal handlers to run
+            await asyncio.sleep(0.1)
+    finally:
+        global ROUTER
+        # Clean up resources
+        logging.info("Cleaning up resources...")
+        server.close()
+        await server.wait_closed()
+        clean_pbr()
+        if ROUTER:
+            ROUTER.stop()  # Ensure Router's __del__ method is called for cleanup
+
+        logging.info("Server shutdown complete")
 
 
 if __name__ == '__main__':
@@ -178,3 +191,8 @@ if __name__ == '__main__':
         except Exception as e:
             logging.exception("Failed to connect to pydevd", exc_info=e)
     main()
+
+# todo: add involved interfaces change monitoring and restart
+# todo: check for conntrack before removing expired routes
+# todo: apply timeouts to marked traffic
+# todo: synchronize all timeouts - dns ttl, --- route expiration --- and --conntrack--

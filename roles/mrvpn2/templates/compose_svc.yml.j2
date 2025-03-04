@@ -1,5 +1,9 @@
 services:
     {{item.key}}_pdns:
+        depends_on:
+          {{item.key}}:
+            condition: service_healthy
+            restart: true
         restart: always
         build: {{mrvpn_svcs_root}}/powerdns
         cap_add: [ NET_ADMIN ]
@@ -9,13 +13,24 @@ services:
         environment:
             - "MRVPN_INTERFACES={{item.value | join (',')}}"
     {{item.key}}_ipt:
+        depends_on:
+          {{item.key}}:
+            condition: service_healthy
+            restart: true
         restart: always
         build: {{mrvpn_svcs_root}}/ipt-server
         cap_add: [ NET_ADMIN ]
         network_mode: "service:{{item.key}}"
+        environment:
+            - "CONFIG=/settings.yaml"
+       #     - "LOGLEVEL=DEBUG"
         volumes:
             - "{{ipt_server_config_file.dest}}:/settings.yaml"
     {{item.key}}_frr:
+        depends_on:
+          {{item.key}}:
+            condition: service_healthy
+            restart: true
         restart: always
         cap_add:
             - CAP_NET_RAW

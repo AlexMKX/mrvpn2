@@ -1,8 +1,0 @@
-table ip ipt_server {
-chain forward {
-		type filter hook prerouting priority raw; policy accept;
-		iifname "{{config.interface}}" counter ct mark set {{config.pbr_mark}}
-		iifname "{{config.interface}}" counter meta mark set {{config.pbr_mark}}
-	}
-}
-
