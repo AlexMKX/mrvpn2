@@ -194,3 +194,4 @@ if __name__ == '__main__':
     main()
 
 # todo: add involved interfaces change monitoring and restart
+# todo: add health checks
