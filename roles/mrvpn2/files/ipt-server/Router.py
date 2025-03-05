@@ -7,7 +7,7 @@ import queue
 import Config
 from route import RouteObject
 import threading
-
+import copy
 from lib import *
 
 import ipaddress
@@ -28,11 +28,38 @@ class Router:
                     if interval.data.expired
                 ]
 
+                if not expired_intervals:
+                    continue
+
+                # Track which expired intervals have active connections
+                intervals_to_keep = set()
+
+                try:
+                    for entry in self._conntrack.dump_entries():
+                        try:
+                            src_addr = int(ipaddress.ip_address(entry.tuple_orig.saddr))
+                            dst_addr = int(ipaddress.ip_address(entry.tuple_orig.daddr))
+
+                            # Check each expired interval to see if it contains this connection
+                            for interval in expired_intervals:
+                                if (interval.begin <= src_addr < interval.end or
+                                        interval.begin <= dst_addr < interval.end):
+                                    intervals_to_keep.add(interval)
+                                    # Once we know we're keeping this interval, no need to check it again
+                                    break
+                        except Exception as e:
+                            logger.debug(f"Error processing conntrack entry: {e}")
+                except Exception as e:
+                    logger.warning(f"Error accessing conntrack entries: {e}")
+
+                # Process each expired interval
                 for interval in expired_intervals:
-                    self._route_tree.remove(interval)
-                    route_spec = interval.data.route_spec
-                    self._route_queue.put(("del", route_spec))
-                    logging.info(f"Removed expired route: {interval.data.net}")
+                    if interval not in intervals_to_keep:
+                        # No active connections, remove the route
+                        self._route_tree.remove(interval)
+                        route_spec = interval.data.route_spec
+                        self._route_queue.put(("del", route_spec))
+                        logger.info(f"Removed expired route: {interval.data.net}")
 
     def remove_conntrack_entries_for_destination(self, destination: IntervalTree):
         """
@@ -70,7 +97,7 @@ class Router:
             logger.warning(f"Error processing conntrack entries: {e}")
             raise
 
-    def add_route(self, route: Config.RouteObject, immediate=False):
+    def add_route(self, route: Config.RouteObject, immediate=False) -> Optional[RouteObject]:
         with self._routes_lock:
             net_start = route.net_start
             net_end = route.net_end
@@ -84,7 +111,7 @@ class Router:
                         interval.data.interface == route.interface):
                     # Update existing route
                     interval.data.reset_expiration(route.ttl)
-                    return
+                    return copy.deepcopy(interval.data)
 
             # 2. Check for overlaps with existing less-specific routes with higher weight
             overlapping_intervals = self._route_tree[net_start:net_end + 1]
@@ -94,7 +121,7 @@ class Router:
                         interval.data.weight > route.weight):
                     logging.info(
                         f"Skipping route for {route.net} due to overlapping route with less specific prefix and higher weight")
-                    return
+                    return copy.deepcopy(interval.data)
 
             # 3. If no exact match or overlapping route found, add the new route
             route.reset_expiration(route.ttl)
@@ -113,6 +140,7 @@ class Router:
                         logging.warning(f"Error adding route immediately: {route} {e}")
             else:
                 self._route_queue.put(("add", route.route_spec))
+            return copy.deepcopy(new_interval.data)
 
     @timeit
     def _load_routes(self):
@@ -145,9 +173,10 @@ class Router:
     def __repr__(self):
         return f"Router({self._cfg.interfaces})"
 
-    def on_a_record(self, record: ARecord):
+    def on_a_record(self, record: ARecord) -> dict:
         selected_route: Optional[RouteObject] = None
-
+        ttls = []
+        ttls.append(record.ttl)
         # Iterate over all routes in the config
         for route in self._cfg.routes:
             if isinstance(route, Config.DomainRoute) and route.match(record.name):
@@ -156,7 +185,13 @@ class Router:
                     selected_route = new_route
 
         if selected_route:
-            self.add_route(selected_route, immediate=True)
+            added_route = self.add_route(selected_route, immediate=True)
+            ttls.append(added_route.ttl)
+        else:
+            ttls.append(self._cfg.domain_route_ttl)
+        valid_ttls = [ttl for ttl in ttls if ttl is not None and ttl > 0]
+        rv = {"ttl": min(valid_ttls) if valid_ttls else None}
+        return rv
 
     def stop(self):
         self._shutdown_event.set()

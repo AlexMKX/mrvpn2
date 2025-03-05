@@ -109,12 +109,12 @@ def main():
         logging.info("Exiting application")
 
 
-def process_a_record(record):
+def process_a_record(record) -> dict:
     """
     record format: {'query': 'microsoft.com.', 'content': '20.236.44.162', 'name': 'microsoft.com.', 'type': 1}
     """
     global ROUTER
-    ROUTER.on_a_record(dns_records.ARecord(record))
+    return ROUTER.on_a_record(dns_records.ARecord(record))
 
 
 async def echo(websocket: websockets.ServerConnection) -> None:
@@ -127,9 +127,10 @@ async def echo(websocket: websockets.ServerConnection) -> None:
         try:
             msg = json.loads(message)
             logging.debug(f"Got message {msg}")
+            rv = {}
             if msg['type'] == 1:
-                process_a_record(msg)
-            await websocket.send("OK")
+                rv = process_a_record(msg)
+            await websocket.send(json.dumps(rv))
         except json.JSONDecodeError:
             logging.error(f"Invalid JSON received: {message}")
             await websocket.send("Error: Invalid JSON")
@@ -153,7 +154,7 @@ async def async_main():
     for sig in [signal.SIGINT, signal.SIGTERM]:
         loop.add_signal_handler(
             sig,
-            lambda s=sig: asyncio.create_task(shutdown(s, stop_event))
+            lambda s=sig: asyncio.create_task(shutdown(s, stop_event)), None
         )
 
     # Start the websocket server
@@ -193,6 +194,3 @@ if __name__ == '__main__':
     main()
 
 # todo: add involved interfaces change monitoring and restart
-# todo: check for conntrack before removing expired routes
-# todo: apply timeouts to marked traffic
-# todo: synchronize all timeouts - dns ttl, --- route expiration --- and --conntrack--

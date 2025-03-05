@@ -29,7 +29,8 @@ routes:
     weight: 99
   - domain: [ '.*\.chatgpt.com', 'chatgpt.com' ]
     interface: docker0
-    weight: 50
+    weight: 500
+#    route_ttl: 10
   - net: '81.177.6.147'
     interface: docker0
     weight: 5
@@ -41,3 +42,4 @@ interfaces:
   - wg-firezone_1
 pbr_mark: 200
 table: 200
+domain_route_ttl: 100

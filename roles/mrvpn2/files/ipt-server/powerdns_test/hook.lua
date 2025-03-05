@@ -20,22 +20,43 @@ function postresolve(dq)
             query = dq.qname:toString(),
             name = v.name:toString(),
             type = v.type,
-            content = v:getContent()
+            content = v:getContent(),
+            ttl = v.ttl
         }
         --        if string.len(message) > 0 then
         local json_message = cjson.encode(message)
         pdnslog(json_message, pdns.loglevels.Debug)
         if v.type == pdns.A then
-            v.ttl = 30  -- Modify this value as needed
             modified = true
+            local success, response
             if not ws:send(json_message) then
                 pdnslog('Reconnecting ipt-server')
                 ws = nil
                 ws = websocket.new_from_uri(ws_uri)
                 ws:connect()
-                ws:send(json_message)
+                success = ws:send(json_message)
+                if not success then
+                    pdnslog('Failed to send message after reconnection', pdns.loglevels.Error)
+                end
             end
-            ws:receive()
+
+            response = ws:receive()
+            if response then
+                pdnslog("Received response: " .. response, pdns.loglevels.Debug)
+                local success, response_data = pcall(cjson.decode, response)
+                if success and response_data and response_data.ttl then
+                    v.ttl = response_data.ttl
+                    pdnslog("Setting TTL to " .. response_data.ttl, pdns.loglevels.Debug)
+                else
+                    -- Fallback to default TTL if response parsing fails
+                    v.ttl = 30
+                    pdnslog("Using default TTL (30) due to invalid response", pdns.loglevels.Warning)
+                end
+            else
+                -- Fallback to default TTL if no response
+                v.ttl = 30
+                pdnslog("Using default TTL (30) due to no response", pdns.loglevels.Warning)
+            end
         end
     end
     if modified then
@@ -44,6 +65,7 @@ function postresolve(dq)
     end
     return true
 end
+
 function maintenance()
     -- to handle keepalive ping/pong
     local x = ws:receive(0)
