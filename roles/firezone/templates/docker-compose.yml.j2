@@ -89,6 +89,21 @@ services:
       start_period: 20s
     networks:
       - firezone-network
+  conntrack-log:
+    restart: always
+    build: ./conntrack_log
+    network_mode: service:firezone
+    depends_on:
+      firezone:
+        condition: service_healthy
+        restart: true
+    cap_add:
+      - NET_ADMIN
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "1g"
+        max-file: "3"
 
   autoheal:
     restart: always

@@ -47,6 +47,11 @@
     path: "{{fz_main_compose_file}}"
   register: fz_main_compose_file_stat
 
+- name: Copy files
+  copy:
+    src: "files/"
+    dest: "{{ fz_firezone_dir }}"
+
 - name: Write env file
   ansible.builtin.template:
     dest: "{{ fz_firezone_dir }}/.env"
