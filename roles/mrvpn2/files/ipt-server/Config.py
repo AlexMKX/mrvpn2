@@ -8,7 +8,7 @@ from route import RouteObject
 
 
 class BaseRoute(BaseSettings):
-    interface: str
+    interface: Optional[str] = None
     metric: Optional[int] = 200
     weight: Optional[int] = 0
     model_config = ConfigDict(extra='allow')
@@ -90,6 +90,7 @@ class DomainRoute(BaseRoute):
 class NetRoute(BaseRoute):
     type: Literal["net"] = "net"
     net: Union[str, ipaddress.IPv4Network]
+    ttl: Optional[int] = None
 
     @field_validator("net", mode="before")
     def set_net(cls, v) -> ipaddress.IPv4Network:
@@ -100,6 +101,19 @@ class NetRoute(BaseRoute):
 
     def model_post_init(self, __context: Any) -> None:
         self.add_subnet(self.net)
+
+    def add_subnet(self, ip_net: Union[str, ipaddress.IPv4Network]) -> None:
+        subnet = ipaddress.IPv4Network(ip_net, strict=False)
+
+        route_spec = RouteObject(
+            net=subnet,
+            weight=self.weight,
+            interface=self.interface,
+            ttl=self.ttl,
+            metric=self.metric,
+        )
+
+        self._routes.append(route_spec)
 
 
 class MySettings(BaseSettings):

@@ -147,6 +147,10 @@ class Router:
         for conf_route in self._cfg.routes:
             if isinstance(conf_route, Config.CountryRoute) or isinstance(conf_route, Config.NetRoute):
                 for r in conf_route.routes:
+                    # Skip routes without interface
+                    if r.interface is None:
+                        logging.info(f"Skipping route {r.net} - no interface specified, will be used only for TTL calculation")
+                        continue
                     self.add_route(r)
         logging.info("Country routes loaded")
 
@@ -177,6 +181,21 @@ class Router:
         selected_route: Optional[RouteObject] = None
         ttls = []
         ttls.append(record.ttl)
+        
+        # Check if the IP matches any network rules
+        ip_int = int(ipaddress.IPv4Address(record.content))
+        network_ttl = None
+        
+        for route in self._cfg.routes:
+            if isinstance(route, Config.NetRoute):
+                for net_route in route.routes:
+                    if net_route.net_start <= ip_int <= net_route.net_end:
+                        if net_route.ttl is not None:
+                            network_ttl = net_route.ttl
+                            break
+                if network_ttl is not None:
+                    break
+
         # Iterate over all routes in the config
         for route in self._cfg.routes:
             if isinstance(route, Config.DomainRoute) and route.match(record.name):
@@ -185,12 +204,21 @@ class Router:
                     selected_route = new_route
 
         if selected_route:
-            added_route = self.add_route(selected_route, immediate=True)
-            ttls.append(added_route.ttl)
+            # Calculate final TTL before adding route
+            if network_ttl is not None:
+                ttls.append(network_ttl)
+            valid_ttls = [ttl for ttl in ttls if ttl is not None and ttl > 0]
+            final_ttl = min(valid_ttls) if valid_ttls else None
+            
+            # Set the calculated TTL before adding route
+            selected_route.ttl = final_ttl
+            self.add_route(selected_route, immediate=True)
         else:
             ttls.append(self._cfg.domain_route_ttl)
-        valid_ttls = [ttl for ttl in ttls if ttl is not None and ttl > 0]
-        rv = {"ttl": min(valid_ttls) if valid_ttls else None}
+            valid_ttls = [ttl for ttl in ttls if ttl is not None and ttl > 0]
+            final_ttl = min(valid_ttls) if valid_ttls else None
+            
+        rv = {"ttl": final_ttl}
         return rv
 
     def stop(self):
