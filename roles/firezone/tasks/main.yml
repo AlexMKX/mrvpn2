@@ -4,7 +4,7 @@
 ---
 - assert:
     that: fz_admin_password is not defined or fz_admin_password|length>=12
-
+#todo: check for netaddr on localhost
 - name: Ensure firezone_dir exists
   ansible.builtin.file:
     path: "{{ fz_firezone_dir }}"
