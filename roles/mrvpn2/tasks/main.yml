@@ -1,7 +1,7 @@
 - block:
     - include_tasks: role_main.yml
-#  rescue:
-#    - name: Prepare hosts
-#      include_tasks:
-#         file: "{{role_path}}../../../playbooks/tasks/prepare_hosts.yml"
-#    - include_tasks: role_main.yml
+  rescue:
+    - name: Prepare hosts
+      include_tasks:
+         file: "{{role_path}}../../../playbooks/tasks/prepare_hosts.yml"
+    - include_tasks: role_main.yml

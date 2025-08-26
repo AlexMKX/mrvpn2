@@ -30,7 +30,7 @@ services:
 {% if 'compose_service' in wg_interface %}
     depends_on:
       {{wg_interface['compose_service']}}:
-        condition: service_started
+        condition: service_healthy
         restart: true
 {% if 'port' in wg_interface['wg_config'] and ((wg_interface['wg_config']['port'] | int(0)) > 0) %}
   {{wg_interface['compose_service']}}:

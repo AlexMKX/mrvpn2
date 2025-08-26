@@ -15,6 +15,9 @@
     apply:
       delegate_to: "{{item}}"
   loop: "{{ prepare_hosts }}"
+  when:
+    - hostvars[item].ansible_system is defined
+    - hostvars[item].ansible_system == 'Linux'
 - set_fact:
     packages_to_install:
       - rsync
@@ -33,9 +36,15 @@
     update_cache: true
   delegate_to: "{{item}}"
   loop: "{{ prepare_hosts }}"
-  become: yes
+  become: true
+  when:
+    - hostvars[item].ansible_system is defined
+    - hostvars[item].ansible_system == 'Linux'
 - apt:
     name: "{{packages_to_install}}"
     state: present
   delegate_to: localhost
-  become: yes
+  become: true
+  when:
+    - ansible_system is defined
+    - ansible_system == 'Linux'
