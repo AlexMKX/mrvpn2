@@ -86,8 +86,12 @@
 
   register: result
 
+- debug:
+    msg: "{{result}}"
 - set_fact:
     fz_firezone_container_id: "{{(result.containers | selectattr ('Service', 'equalto', 'firezone') | list | first)['ID']  }}"
+- set_fact:
+    fz_postgres_container_id: "{{(result.containers | selectattr('Service','equalto','postgres') | list | first)['ID'] }}"
 
 
 - name: Ensure admin account exists
@@ -172,21 +176,25 @@
         Content-Type: application/json
       body_format: json
 
+- debug:
+    msg: "{{fz_postgres_container_id}}"   
+
 - name: Restarting stack
   community.docker.docker_compose_v2:
     project_src: "{{ fz_firezone_dir }}"
     state: restarted
-    wait: yes
+    wait: true
 
 - name: Shutting down the stack
   community.docker.docker_compose_v2:
     project_src: "{{ fz_firezone_dir }}"
     state: absent
-    wait: yes
+    wait: true
 
 - name: Clean up temporary facts
   ansible.builtin.set_fact:
     fz_firezone_container_id: null
+    fz_postgres_container_id: null
     fz_api_token: null
     credentials_env_content: null
     token_result: null

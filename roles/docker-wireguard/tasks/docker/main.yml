@@ -25,10 +25,10 @@
 
 ##todo: check why FRR config not generated
 #
-#- name: "Generate FRR configuration"
-#  template:
-#    src: templates/frr.conf.j2
-#    dest: "{{wg_target_dir}}/frr/frr.conf"
+- name: "Generate FRR configuration"
+  template:
+    src: templates/frr.conf.j2
+    dest: "{{wg_target_dir}}/frr/frr.conf"
 #  when: False
 
 - name: "Generate peers configuration"

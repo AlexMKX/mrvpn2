@@ -1,6 +1,6 @@
 services:
   {{wg_tunnel_name}}:
-    restart: unless-stopped
+    restart: always
     build:
       context: {{wg_target_dir}}/wg-tunnel
     cap_add:
@@ -40,16 +40,23 @@ services:
 
 
 {% endif %}
+{% if 'compose_service' not in wg_interface %}
+  {{wg_tunnel_name}}_frr:
+    restart: always
+    cap_add:
+      - CAP_NET_RAW
+      - NET_ADMIN
+      - SYS_ADMIN
+    privileged: false
+    image: quay.io/frrouting/frr:9.1.0
 
-#  {{wg_tunnel_name}}_frr:
-#    restart: always
-#    cap_add:
-#      - CAP_NET_RAW
-#      - NET_ADMIN
-#      - SYS_ADMIN
-#    privileged: false
-#    image: quay.io/frrouting/frr:9.1.0
-#    network_mode: "service:{{wg_tunnel_name}}"
-#    volumes:
-#      - {{wg_target_dir}}/frr:/etc/frr:rw
+    network_mode: "service:{{wg_tunnel_name}}"
 
+    depends_on:
+      {{wg_tunnel_name}}:
+        condition: service_started
+        restart: true
+    volumes:
+      - {{wg_target_dir}}/frr:/etc/frr:rw
+
+{% endif %}
