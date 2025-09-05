@@ -1,21 +1,5 @@
 /dev/
 **/__pycache__/
-/keys/
-test_ssh_local.py
-test_ssh_wsl.sh
-deploy_local.py
-
-# Environment variables
-env.example
-env
-.env
-.env.local
-.env.production
-
-# SSH keys
-keys/
-*.pem
-*.key
 
 # Ansible
 *.retry
@@ -27,11 +11,3 @@ keys/
 # Temporary files
 *.tmp
 *.temp
-
-# Development scripts
-check_docker_compose_v2.py
-check_v2.bat
-README_CHECK_V2.md
-
-# Parent project directory
-mrvpn2-master/
