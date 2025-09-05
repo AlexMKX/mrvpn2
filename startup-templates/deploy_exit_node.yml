@@ -1,0 +1,218 @@
+---
+# MRVPN2 Exit Node Deployment Playbook
+# Deploy WireGuard on exit node
+# Run ONLY after successful main host deployment
+
+- name: Deploy MRVPN2 Exit Node
+  hosts: exit1_vpn_example_com
+  become: true
+  gather_facts: true
+  any_errors_fatal: false
+  serial: 1
+
+  vars_files:
+    - deployment-config.yml
+    - mrvpn_config.yml
+
+  vars:
+    playbook_dir: "{{ ansible_env.PWD | default(ansible_env.PWD) | default('.') }}"
+    templates_dir: "{{ playbook_dir }}/templates"
+
+  pre_tasks:
+    - name: Verify SSH connection before starting
+      wait_for_connection:
+        timeout: 30
+      delegate_to: localhost
+
+    - name: Debug main host IP for connectivity check
+      debug:
+        msg: "Checking connectivity to main host IP: {{ lookup('env', 'VPN_MAIN_IP') | default('NOT_SET') }}"
+
+    - name: Check if main host is accessible
+      command: ping -c 3 {{ lookup('env', 'VPN_MAIN_IP') | default('127.0.0.1') }}
+      register: main_host_ping
+      ignore_errors: yes
+      when: lookup('env', 'VPN_MAIN_IP') != ''
+
+    - name: Skip connectivity check if VPN_MAIN_IP not set
+      debug:
+        msg: "VPN_MAIN_IP not set, skipping connectivity check"
+      when: lookup('env', 'VPN_MAIN_IP') == ''
+
+    - name: Validate main host connectivity
+      assert:
+        that: (main_host_ping.rc == 0) or (lookup('env', 'VPN_MAIN_IP') == '')
+        fail_msg: "Main host (IP: {{ lookup('env', 'VPN_MAIN_IP') }}) is not accessible! Make sure main host is deployed and running."
+
+    - name: Validate deployment configuration
+      assert:
+        that:
+          - deployment_config is defined
+          - mrvpn_config is defined
+        fail_msg: "Missing required configuration files"
+
+    - name: Debug exit node deployment configuration
+      debug:
+        msg: |
+          Exit Node Deployment Config:
+            wireguard.deploy: {{ deployment_config.services.wireguard.deploy }}
+          Main host: {{ mrvpn_config.entrypoint }}
+          Exit node: {{ inventory_hostname }}
+
+    - name: Set playbook directory
+      set_fact:
+        playbook_dir: "{{ ansible_env.PWD | default('.') }}"
+
+    - name: Create MRVPN base directory
+      file:
+        path: "{{ mrvpn_config.mrvpn_base_dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Check if Docker is available
+      command: docker --version
+      register: docker_check
+      ignore_errors: yes
+      changed_when: false
+
+    - name: Debug Docker check result
+      debug:
+        msg: "Exit node Docker check: rc={{ docker_check.rc }}, stdout={{ docker_check.stdout | default('') }}"
+
+    - name: Install Docker if missing
+      block:
+        - name: Clean up conflicting Docker keys and repositories
+          shell: |
+            # Remove conflicting keys
+            rm -f /usr/share/keyrings/docker.asc
+            rm -f /usr/share/keyrings/docker-archive-keyring.gpg
+            rm -f /etc/apt/keyrings/docker.asc
+            rm -f /etc/apt/trusted.gpg.d/docker.asc
+
+            # Remove conflicting sources
+            rm -f /etc/apt/sources.list.d/docker.list
+            rm -f /etc/apt/sources.list.d/download_docker_com_linux_ubuntu.list
+
+            # Clean apt cache
+            apt-get clean
+            rm -rf /var/lib/apt/lists/*
+            mkdir -p /var/lib/apt/lists/partial
+            apt-get update
+          when: ansible_os_family == 'Debian'
+
+        - name: Install Docker dependencies
+          package:
+            name:
+              - apt-transport-https
+              - ca-certificates
+              - curl
+              - gnupg
+              - lsb-release
+              - software-properties-common
+            state: present
+          when: ansible_os_family == 'Debian'
+
+        - name: Add Docker GPG key
+          apt_key:
+            url: https://download.docker.com/linux/ubuntu/gpg
+            state: present
+          when: ansible_os_family == 'Debian'
+
+        - name: Add Docker repository
+          apt_repository:
+            repo: "deb [arch={{ ansible_architecture }}] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+            state: present
+          when: ansible_os_family == 'Debian'
+
+        - name: Install Docker
+          package:
+            name:
+              - docker.io
+              - docker-compose-v2
+            state: present
+          when: ansible_os_family == 'Debian'
+
+        - name: Install Docker Compose
+          get_url:
+            url: https://github.com/docker/compose/releases/download/v2.33.1/docker-compose-linux-x86_64
+            dest: /usr/local/bin/docker-compose
+            mode: '0755'
+
+        - name: Start and enable Docker service
+          systemd:
+            name: docker
+            state: started
+            enabled: yes
+            daemon_reload: yes
+      when: docker_check.rc != 0
+
+    - name: Configure UFW firewall TCP rules
+      ufw:
+        rule: allow
+        port: "{{ item }}"
+        proto: tcp
+      loop:
+        - "22"    # SSH (for server management)
+
+    - name: Configure WireGuard UFW rule (UDP 51620)
+      ufw:
+        rule: allow
+        port: "51620"
+        proto: udp
+
+    - name: Enable UFW firewall
+      ufw:
+        state: enabled
+        policy: deny
+
+
+  handlers:
+    - name: reload systemd
+      systemd:
+        daemon_reload: yes
+
+  roles:
+    - role: docker-wireguard
+      vars:
+        wg_tunnel_config: "{{ mrvpn_config.tunnels.wg_exit1 }}"
+        wg_tunnel_name: "wg_exit1"
+        wg_base_dir: "{{ mrvpn_config.mrvpn_base_dir }}/wireguard"
+
+  post_tasks:
+    - name: Create systemd service for WireGuard exit node
+      template:
+        src: "{{ templates_dir }}/wireguard-exit.service.j2"
+        dest: /etc/systemd/system/wireguard-exit.service
+        mode: '0644'
+      notify: reload systemd
+      when: deployment_config.services.wireguard.deploy
+
+    - name: Enable and start WireGuard exit service
+      systemd:
+        name: wireguard-exit
+        enabled: yes
+        state: started
+      when: deployment_config.services.wireguard.deploy
+
+    - name: Display exit node deployment summary
+      debug:
+        msg: |
+          MRVPN2 Exit Node Deployment Complete!
+
+          Services deployed on exit node:
+          - WireGuard tunnel: {{ 'DEPLOYED' if deployment_config.services.wireguard.deploy else 'SKIP' }}
+
+          Exit node is ready to serve as VPN gateway.
+          Main host ({{ mrvpn_config.entrypoint }}) should be running Firezone for full functionality.
+
+    - name: Display exit node deployment errors
+      debug:
+        msg: |
+          Exit node deployment completed with errors!
+
+          Check the logs above for specific error details.
+          Common issues:
+          - WireGuard tunnel configuration failed
+          - Network connectivity to main host issues
+          - Docker installation problems
+      when: false

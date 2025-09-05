@@ -2,17 +2,22 @@
 fz_config: {}
 ## Firezone admin email
 fz_client_subnet: "{{fz_config['fz_client_subnet'] | default ('10.11.0.0/24')}}"
-fz_admin: "{{fz_config['fz_admin'] | default ('fz-admin@localhost')}}"
-fz_admin_password: "{{fz_config['fz_admin_password'] | default (lookup('community.general.random_string', base64=true, length=12))  }}"
-fz_wireguard_port: "{{fz_config['fz_wireguard_port'] | default ('51620')}}"
-fz_firezone_dir: "{{fz_config['fz_firezone_dir'] | default ('/opt/firezone')}}"
+fz_client_gateway: "{{fz_config['fz_client_gateway'] | default ('10.11.0.1')}}"
+# fz_admin, fz_admin_password, fz_wireguard_port, fz_firezone_dir, fz_server_url 
+# are now passed directly from the calling playbook to avoid recursion
 fz_firezone_https: "{{fz_config['fz_firezone_https'] | default (true)}}"
-fz_server_url: "{{fz_config['fz_server_url'] | default ('https://'+ansible_host)}}"
 fz_redeploy: false
 fz_custom_labels: "{{fz_config['fz_custom_labels'] | default ([])}}"
 fz_mgmt_subnet: "{{fz_config['fz_mgmt_subnet'] | default ()}}"
 fz_cleanup: false
 fz_oidc: "{{fz_config['fz_oidc'] | default (undef())}}"
+firezone_addon_ports: "{{fz_config['firezone_addon_ports'] | default ([])}}"
+fz_admin: "{{fz_config['fz_admin'] | default ('admin@example.com')}}"
+fz_admin_password: "{{fz_config['fz_admin_password']}}"
+fz_wireguard_port: "{{fz_config['fz_wireguard_port'] | default ('51620')}}"
+fz_server_url: "{{fz_config['fz_server_url'] | default ('https://localhost')}}"
+fz_firezone_dir: "{{fz_config['fz_firezone_dir'] | default ('/opt/firezone')}}"
+fz_main_compose_file: "{{fz_firezone_dir}}/docker-compose.yml"
 
 #firezone_redeploy: false
 #client_subnet: 172.31.224.0/20

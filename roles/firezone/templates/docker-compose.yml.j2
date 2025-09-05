@@ -12,7 +12,7 @@ services:
       - |
           cat <<EOF > /etc/caddy/Caddyfile && cd /etc/caddy/ && caddy fmt --overwrite  && caddy run --config /etc/caddy/Caddyfile
 
-          ${EXTERNAL_URL:?err} {
+          {{ fz_server_url }} {
             log
             reverse_proxy * firezone:13000
           }
@@ -71,18 +71,18 @@ services:
       timeout: 10s
       retries: 20
       start_period: 10s
-    labels: {{fz_custom_labels}}
+    labels: {{ fz_custom_labels | default('[]') }}
   postgres:
     restart: always
     image: postgres:15
     volumes:
       - ./postgres-data:/var/lib/postgresql/data
     environment:
-      POSTGRES_DB: ${DATABASE_NAME:-firezone}
-      POSTGRES_USER: ${DATABASE_USER:-postgres}
-      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:?err}
+      POSTGRES_DB: firezone
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD}
     healthcheck:
-      test: [ "CMD-SHELL", "/usr/bin/pg_isready -U$$POSTGRES_USER" ]
+      test: [ "CMD-SHELL", "/usr/bin/pg_isready -Upostgres" ]
       interval: 30s
       timeout: 10s
       retries: 20
@@ -102,7 +102,7 @@ services:
     logging:
       driver: "json-file"
       options:
-        max-size: "1g"
+        max-size: "512m"
         max-file: "3"
 
   autoheal:
@@ -117,7 +117,7 @@ services:
 networks:
   firezone-network:
     driver: bridge
-{%if fz_mgmt_subnet %}
+{%if fz_mgmt_subnet is defined and fz_mgmt_subnet %}
     ipam:
       config:
         - subnet: {{ fz_mgmt_subnet }}

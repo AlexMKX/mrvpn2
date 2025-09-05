@@ -1,41 +1,21 @@
-
-- name: Shutdown compose services
-  community.docker.docker_compose_v2:
-    project_src: "{{mrvpn_root}}"
-    state: absent
-    remove_orphans: yes
-  failed_when: false
-  delegate_to: "{{mrvpn_config['entrypoint']}}"
+- name: Set entrypoint variable explicitly
+  set_fact:
+    entrypoint: "{{ entrypoint | default('vpn_tehinkome_ru') }}"
+    mrvpn_tunnel_name: "wg_exit1"
   tags: always
-- block:
-    - include_role:
-        name: alexmkx.mrvpn2.firezone
-      vars:
-        fz_config: "{{mrvpn_config['firezone']}}"
-        fz_firezone_dir: "{{mrvpn_root}}/firezone"
-    - set_fact:
-        fz_main_compose_file: "/opt/mrvpn/firezone/docker-compose.yml"
-    - include_tasks:
-        file: ../../../playbooks/tasks/patch_compose.yml
-      vars:
-        compose_dir: "{{mrvpn_root}}"
-        compose_files:
-          - "{{fz_main_compose_file}}"
-  delegate_to: "{{mrvpn_config['entrypoint']}}"
-  tags: firezone
-#  when: false
+
+- name: Debug MRVPN configuration
+  debug:
+    msg: |
+      MRVPN Config:
+        entrypoint: {{ entrypoint }}
+        mrvpn_root: {{ mrvpn_root }}
+        mrvpn_tunnel_name: {{ mrvpn_tunnel_name }}
+        wg_tunnel_result defined: {{ wg_tunnel_result is defined }}
+
+# Firezone is now handled by separate firezone role
 
 - block:
-    - include_role:
-        name: docker-wireguard
-      vars:
-        wg_tunnel_config: "{{mrvpn_config['tunnels'][mrvpn_tunnel_name]}}"
-        wg_tunnel_name: "{{mrvpn_tunnel_name}}"
-        wg_root_dir: "/opt/mrvpn/wg_tunnels"
-      loop_control:
-        loop_var: mrvpn_tunnel_name
-      loop: "{{mrvpn_config['tunnels'].keys()}}"
-
     - name: Extract compose file paths for the current host
       set_fact:
         entrypoint_compose_files: >-
@@ -43,7 +23,7 @@
              map(attribute='value.hosts') |
              map('dict2items') |
              flatten |
-             selectattr('key', 'equalto', mrvpn_config['entrypoint']) |
+             selectattr('key', 'equalto', entrypoint) |
              map(attribute='value.compose_file') |
              list }}
     - block:
@@ -52,10 +32,13 @@
           vars:
             compose_dir: "{{mrvpn_root}}"
             compose_files: "{{entrypoint_compose_files}}"
-      delegate_to: "{{mrvpn_config['entrypoint']}}"
+      delegate_to: "{{entrypoint}}"
       when: entrypoint_compose_files | length > 0
   tags: tunnels
-- block:
+  when: wg_tunnel_result is defined
+
+- name: Compose services tasks
+  block:
     - include_tasks:
         file: compose_svcs.yml
     - include_tasks:
@@ -63,23 +46,40 @@
       vars:
         compose_dir: "{{mrvpn_root}}"
         compose_files: "{{compose_svcs_files}}"
-  delegate_to: "{{mrvpn_config['entrypoint']}}"
+  delegate_to: "{{entrypoint}}"
+  ignore_unreachable: true
   tags: services
 
-- name: Shutdown compose services
+- name: Shutdown MRVPN compose services
   community.docker.docker_compose_v2:
-    project_src: "{{mrvpn_root}}"
+    project_src: "{{mrvpn_root}}/mrvpn"
     state: absent
     remove_orphans: yes
-    wait: yes
-  delegate_to: "{{mrvpn_config['entrypoint']}}"
+  delegate_to: "{{entrypoint}}"
+  ignore_unreachable: true
+  failed_when: false
   tags: always
-- name: Pull, build and start compose services
+
+- name: Pull, build and start WireGuard compose services
   community.docker.docker_compose_v2:
     build: always
     pull: always
-    project_src: "{{mrvpn_root}}"
+    project_src: "{{mrvpn_root}}/wg_tunnels/{{ item.key }}"
     state: present
-    wait: yes
-  delegate_to: "{{mrvpn_config['entrypoint']}}"
+  loop: "{{ wg_tunnel_result | dict2items }}"
+  when: wg_tunnel_result is defined
+  delegate_to: "{{entrypoint}}"
+  ignore_unreachable: true
+  failed_when: false
+  tags: always
+
+- name: Pull, build and start MRVPN compose services
+  community.docker.docker_compose_v2:
+    build: always
+    pull: always
+    project_src: "{{mrvpn_root}}/mrvpn"
+    state: present
+  delegate_to: "{{entrypoint}}"
+  ignore_unreachable: true
+  failed_when: false
   tags: always

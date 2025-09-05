@@ -1,10 +1,10 @@
 websockets
-pyroute2<0.7.0
+pyroute2
 pydantic
 pydantic-settings
 PyYaml
 jinja2
-pyroute2.nftables<0.7.0
+pyroute2.nftables
 expiring_lru_cache
 more_itertools
 duckdb

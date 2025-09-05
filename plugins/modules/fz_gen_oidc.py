@@ -1,4 +1,10 @@
 #!/usr/bin/python
+"""
+Firezone OIDC Configuration Generator Module
+This module generates OIDC (OpenID Connect) configuration for Firezone authentication,
+processing OIDC provider settings and creating base64 encoded configuration for
+integration with external identity providers.
+"""
 
 ANSIBLE_METADATA = {
     'metadata_version': '0.1',
@@ -8,18 +14,47 @@ ANSIBLE_METADATA = {
 
 DOCUMENTATION = """
 ---
-
-
+module: fz_gen_oidc
+short_description: Generate OIDC configuration for Firezone
+description:
+  - This module generates OIDC configuration for Firezone authentication
+  - It processes OIDC provider settings and creates base64 encoded configuration
+version_added: "1.0"
+author: "GFN-CIS"
+options:
+  oidc:
+    description:
+      - Dictionary containing OIDC provider configurations
+    required: true
+    type: dict
 """
 
 EXAMPLES = """
 ---
+- name: Generate OIDC configuration
+  fz_gen_oidc:
+    oidc:
+      google:
+        client_id: "your_client_id"
+        client_secret: "your_client_secret"
+        discovery_document_uri: "https://accounts.google.com/.well-known/openid-configuration"
+        scope: "openid email profile"
 """
 
 RETURN = """
 ---
-:
-
+result:
+  description: Generated OIDC configuration
+  type: dict
+  returned: success
+  contains:
+    config:
+      description: Base64 encoded OIDC configuration
+      type: str
+    redirects:
+      description: List of redirect URIs
+      type: list
+      elements: str
 """
 
 import subprocess

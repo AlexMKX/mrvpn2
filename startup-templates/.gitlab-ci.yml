@@ -1,0 +1,177 @@
+stages:
+  - validate
+  - deploy
+
+variables:
+  ANSIBLE_HOST_KEY_CHECKING: "false"
+  ANSIBLE_RETRY_FILES_ENABLED: "false"
+  ANSIBLE_SSH_ARGS: "-o ControlMaster=auto -o ControlPersist=60s -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o ConnectTimeout=30"
+  ANSIBLE_PYTHON_INTERPRETER: "/usr/bin/python3"
+  DOCKER_TLS_CERTDIR: "/certs"
+
+image: alpine:latest
+
+before_script:
+  - apk add --no-cache ansible openssh-client python3 docker docker-compose git curl bash
+  - apk add --no-cache py3-pip
+  - ansible-galaxy collection install --no-deps community.docker:3.10.4
+  - mkdir -p ~/.ssh && chmod 700 ~/.ssh
+  - eval $(ssh-agent -s)
+  - echo "$SSH_PRIVATE_KEY" | base64 -d > ~/.ssh/id_rsa && chmod 600 ~/.ssh/id_rsa
+  - ssh-add ~/.ssh/id_rsa
+  - mkdir -p ~/.ansible/plugins/modules ~/.ansible/plugins/filter
+  - cp plugins/modules/*.py ~/.ansible/plugins/modules/ 2>/dev/null || true
+  - cp plugins/filter/*.py ~/.ansible/plugins/filter/ 2>/dev/null || true
+
+validate:syntax:
+  stage: validate
+  script:
+    - echo "Validating Ansible playbook syntax..."
+    - ansible-playbook --syntax-check -i inventory.yml deploy_vpn.yml
+    - echo "Ansible syntax is valid"
+  only:
+    - main
+    - develop
+  allow_failure: false
+
+validate:config:
+  stage: validate
+  script:
+    - |
+      # Validate required environment variables
+      if [ -z "$VPN_MAIN_IP" ]; then
+        echo "Environment variable VPN_MAIN_IP is not set!"
+        exit 1
+      else
+        echo "VPN_MAIN_IP = ${VPN_MAIN_IP:0:10}..."
+      fi
+
+      if [ -z "$VPN_EXIT_IPS" ]; then
+        echo "Environment variable VPN_EXIT_IPS is not set!"
+        exit 1
+      else
+        echo "VPN_EXIT_IPS = ${VPN_EXIT_IPS:0:10}..."
+      fi
+
+      if [ -z "$ANSIBLE_USER" ]; then
+        echo "Environment variable ANSIBLE_USER is not set!"
+        exit 1
+      else
+        echo "ANSIBLE_USER = $ANSIBLE_USER"
+      fi
+    - echo "Validating inventory file..."
+    - ansible-inventory -i inventory.yml --list
+  only:
+    - main
+    - develop
+  allow_failure: false
+
+deploy:vpn:
+  stage: deploy
+  environment:
+    name: production
+    url: "{{ lookup('env', 'FZ_SERVER_URL') | default('https://your-vpn.example.com', true) }}"
+  needs:
+    - validate:syntax
+    - validate:config
+  only:
+    - main
+  allow_failure: false
+  script:
+    - |
+      echo "Starting VPN infrastructure deployment..."
+      echo "Commit: $CI_COMMIT_SHA"
+      echo "Branch: $CI_COMMIT_REF_NAME"
+      echo "User: ${ANSIBLE_USER:0:5}..."
+      # Mask IP addresses (first number + last number)
+      MAIN_IP_MASKED=$(echo $VPN_MAIN_IP | awk -F. '{print $1".*.*."$4}')
+      EXIT_IP_MASKED=$(echo $VPN_EXIT_IPS | awk -F. '{print $1".*.*."$4}')
+      echo "Main server: ${MAIN_IP_MASKED}..."
+      echo "Exit node: ${EXIT_IP_MASKED}..."
+      # Validate required environment variables
+      if [ -z "$FZ_ADMIN_PASS" ]; then echo "ERROR: FZ_ADMIN_PASS not set in GitLab Variables"; exit 1; fi
+      if [ -z "$FZ_DB_PASS" ]; then echo "ERROR: FZ_DB_PASS not set in GitLab Variables"; exit 1; fi
+
+      export FZ_ADMIN_EMAIL=${FZ_ADMIN_EMAIL:-"{{ lookup('env', 'FZ_ADMIN_EMAIL') | default('admin@example.com', true) }}"}
+      export FZ_WIREGUARD_PORT=${FZ_WIREGUARD_PORT:-"51620"}
+      export FZ_ADMIN_PASS=$FZ_ADMIN_PASS
+      export FZ_DB_PASS=$FZ_DB_PASS
+      echo "=== GitLab CI Variables ==="
+      echo "FZ_ADMIN_EMAIL: $FZ_ADMIN_EMAIL"
+      echo "FZ_WIREGUARD_PORT: $FZ_WIREGUARD_PORT"
+      echo "FZ_ADMIN_PASS: ${FZ_ADMIN_PASS:0:5}..." # Show only first 5 characters
+      ansible-playbook -i inventory.yml deploy_vpn.yml --extra-vars "ci_commit_ref_name=$CI_COMMIT_REF_NAME" --extra-vars "ci_commit_sha=$CI_COMMIT_SHA"
+      echo " Main host deployment completed successfully!"
+      echo " Exit node deployment will start automatically in 30 seconds..."
+      echo " Full VPN infrastructure will be ready soon!"
+      echo "Next steps:"
+      echo "1. Open {{ lookup('env', 'FZ_SERVER_URL') | default('https://your-vpn.example.com', true) }} in browser"
+      echo "2. Login with username: ${FZ_ADMIN_EMAIL%%@*}@... and password from GitLab"
+      echo "3. Configure OIDC providers"
+      echo "4. Create VPN users"
+
+configure:oidc:
+  stage: deploy
+  environment:
+    name: production
+    url: "{{ lookup('env', 'FZ_SERVER_URL') | default('https://your-vpn.example.com', true) }}"
+  needs:
+    - deploy:exit_node
+  allow_failure: true
+  script:
+    - |
+      echo "Configuring OIDC providers..."
+      export FZ_ADMIN_EMAIL=${FZ_ADMIN_EMAIL:-"{{ lookup('env', 'FZ_ADMIN_EMAIL') | default('admin@example.com', true) }}"}
+      export FZ_WIREGUARD_PORT=${FZ_WIREGUARD_PORT:-"51620"}
+      echo "FZ_ADMIN_EMAIL: $FZ_ADMIN_EMAIL"
+      echo "FZ_WIREGUARD_PORT: $FZ_WIREGUARD_PORT"
+      echo "OIDC_PROVIDER: ${OIDC_PROVIDER:-yandex}"
+      ansible-playbook -i inventory.yml configure_oidc.yml \
+        -e oidc_provider="${OIDC_PROVIDER:-yandex}" \
+        -e target_host="${TARGET_HOST:-{{ lookup('env', 'VPN_MAIN_HOST') | default('vpn-main', true) }}}" \
+        -e force_reconfigure="${FORCE_RECONFIGURE:-false}"
+      echo "OIDC configuration completed!"
+
+deploy:exit_node:
+  stage: deploy
+  environment:
+    name: production
+    url: "{{ lookup('env', 'FZ_SERVER_URL') | default('https://your-vpn.example.com', true) }}"
+  needs:
+    - deploy:vpn
+  allow_failure: true
+  script:
+    - |
+      echo " Automatic exit node deployment after successful VPN deployment..."
+      echo "Waiting 30 seconds for main server stabilization..."
+      sleep 30
+      export FZ_ADMIN_EMAIL=${FZ_ADMIN_EMAIL:-"{{ lookup('env', 'FZ_ADMIN_EMAIL') | default('admin@example.com', true) }}"}
+      export FZ_WIREGUARD_PORT=${FZ_WIREGUARD_PORT:-"51620"}
+      echo "FZ_ADMIN_EMAIL: $FZ_ADMIN_EMAIL"
+      echo "FZ_WIREGUARD_PORT: $FZ_WIREGUARD_PORT"
+      echo "VPN_MAIN_IP: ${VPN_MAIN_IP}"
+      echo "VPN_EXIT_IPS: ${VPN_EXIT_IPS}"
+      echo " Deploying exit node..."
+      ansible-playbook -i inventory.yml deploy_exit_node.yml \
+        --extra-vars "ci_commit_ref_name=$CI_COMMIT_REF_NAME" \
+        --extra-vars "ci_commit_sha=$CI_COMMIT_SHA"
+      echo " Exit node deployed successfully!"
+      echo " VPN infrastructure is fully ready!"
+      echo ""
+      echo " Next steps:"
+      echo "1. Open {{ lookup('env', 'FZ_SERVER_URL') | default('https://your-vpn.example.com', true) }} in browser"
+      echo "2. Login with username: ${FZ_ADMIN_EMAIL%%@*}@..."
+      echo "3. Configure OIDC providers (Yandex/Google/Zitadel)"
+      echo "4. Create VPN users and policies"
+      echo "5. Download WireGuard configurations"
+
+cleanup:failed:
+  stage: deploy
+  when: on_failure
+  needs:
+    - validate:syntax
+    - validate:config
+  allow_failure: true
+  script:
+    - echo "Cleaning up after failed deployment..."
+    - ssh -o StrictHostKeyChecking=no $ANSIBLE_USER@$VPN_MAIN_IP 'docker ps -a | grep -E '\''(Exited|Created)'\'' | awk '\''{print $1}'\'' | xargs -r docker rm -f || true; docker system prune -f || true; echo '\''Cleanup completed'\''' || echo "Failed to execute cleanup"

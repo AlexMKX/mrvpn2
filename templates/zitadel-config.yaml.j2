@@ -1,0 +1,45 @@
+# Zitadel Configuration Template
+# This template configures Zitadel as an OIDC identity provider
+# Customize the external domain, admin credentials, and database settings for your deployment
+
+# Server configuration
+Port: 8080
+ExternalDomain: localhost  # Change to your actual domain
+ExternalPort: 8080
+ExternalSecure: false     # Set to true for HTTPS
+
+# Database configuration for PostgreSQL
+Database:
+  postgres:
+    Host: postgres
+    Port: 5432
+    Database: zitadel
+    User:
+      Username: zitadel
+      Password: zitadel  # Change this password for production
+      SSL:
+        Mode: disable    # Enable SSL for production
+
+# Initial organization and admin user setup
+FirstInstance:
+  Org:
+    Machine:  # Machine user for API access
+      Machine:
+        Username: admin
+        Password: {{ zitadel_admin_password }}  # Set via environment variable
+    Human:    # Human admin user for web interface
+      Username: admin
+      Email:
+        Email: admin@zitadel.local  # Change to your admin email
+      Password: {{ zitadel_admin_password }}  # Same as machine user
+      Profile:
+        FirstName: Admin
+        LastName: User
+
+# Logging configuration
+Log:
+  Level: info
+
+# Initialization steps (OIDC provider setup)
+InitSteps:
+  - zitadel-init-steps.yaml

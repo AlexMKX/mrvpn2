@@ -1,4 +1,5 @@
-- assert:
+- name: Validate WireGuard tunnel configuration
+  assert:
     that:
       - wg_tunnel_name is defined
       - wg_tunnel_config is defined
@@ -15,11 +16,13 @@
     - set_fact:
         wg_tunnel_result: "{{wg_tunnel_result | combine({wg_tunnel_name:wg_tunnel_built.result}) }}"
   name: Building tunnel configuration
-- include_tasks: provision_main.yml
+
+- name: Provision WireGuard tunnel on each host
+  include_tasks: provision_main.yml
   vars:
-    wg_inventory_host: "{{loop_host}}"
+    wg_inventory_host: "{{ host_item }}"
+  loop: "{{ wg_tunnel_result[wg_tunnel_name].hosts.keys() }}"
   loop_control:
-    loop_var: loop_host
-  loop: "{{wg_tunnel_result[wg_tunnel_name].hosts.keys() }}"
+    loop_var: host_item
 
 #todo: add check that autostart is allowed only if there is no service key is defined

@@ -12,6 +12,11 @@ services:
         network_mode: "service:{{item.key}}"
         environment:
             - "MRVPN_INTERFACES={{item.value | join (',')}}"
+        logging:
+            driver: "json-file"
+            options:
+                max-size: "128m"
+                max-file: "3"
     {{item.key}}_ipt:
         depends_on:
           {{item.key}}:
@@ -26,6 +31,11 @@ services:
        #     - "LOGLEVEL=DEBUG"
         volumes:
             - "{{ipt_server_config_file.dest}}:/settings.yaml"
+        logging:
+            driver: "json-file"
+            options:
+                max-size: "128m"
+                max-file: "3"
     {{item.key}}_frr:
         depends_on:
           {{item.key}}:
@@ -41,3 +51,8 @@ services:
         network_mode: "service:{{item.key}}"
         volumes:
             - {{mrvpn_svcs_root}}/frr:/etc/frr:rw
+        logging:
+            driver: "json-file"
+            options:
+                max-size: "128m"
+                max-file: "3"

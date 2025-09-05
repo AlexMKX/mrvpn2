@@ -45,8 +45,23 @@
         - include_tasks: docker/main.yml
           vars:
             wg_interface: "{{wg_tunnel_result[wg_tunnel_name].hosts[wg_inventory_host]}}"
-
       delegate_to: "{{wg_inventory_host}}"
+      ignore_unreachable: true
+      rescue:
+        - name: "Retry Linux provision for {{wg_inventory_host}} after 30 seconds"
+          pause:
+            seconds: 30
+          delegate_to: localhost
+
+        - name: "Retry provision linux {{wg_inventory_host}} (attempt 2)"
+          block:
+            - set_fact:
+                wg_tunnel_result: "{{ wg_tunnel_result | combine({wg_tunnel_name: {'hosts': {wg_inventory_host: {'compose_file': wg_compose_file} } } }, recursive=true) }}"
+            - include_tasks: docker/main.yml
+              vars:
+                wg_interface: "{{wg_tunnel_result[wg_tunnel_name].hosts[wg_inventory_host]}}"
+          delegate_to: "{{wg_inventory_host}}"
+          ignore_unreachable: true
 
       when:
         - hostvars[wg_inventory_host].ansible_network_os is not defined

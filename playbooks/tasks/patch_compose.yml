@@ -18,7 +18,7 @@
 - name: Check for docker-compose.yaml if docker-compose.yml doesn't exist
   set_fact:
     compose_file: "{{ compose_dir }}/docker-compose.yaml"
-  when: 
+  when:
     - compose_file is not defined
     - compose_dir is defined
     - not (compose_dir + '/docker-compose.yml') is file
@@ -27,6 +27,13 @@
   stat:
     path: "{{ compose_file }}"
   register: compose_file_stat
+
+- name: Create directory for compose file if it doesn't exist
+  file:
+    path: "{{ compose_file | dirname }}"
+    state: directory
+    mode: '0755'
+  when: not compose_file_stat.stat.exists
 
 - name: Initialize empty compose file if it doesn't exist
   copy:
@@ -46,13 +53,25 @@
 - name: Validate main compose file structure
   assert:
     that:
-      - original_compose.include is not defined or (original_compose.include | length == 1 and original_compose.include[0].path is defined)
+      - (original_compose.include | default([])) | length == 0 or ((original_compose.include | default([])) | length == 1 and (original_compose.include | default([]))[0].path is defined)
     fail_msg: "The main compose file should have a single 'include' entry with a single 'path' key"
 
 - name: Merge includes
   set_fact:
     merged_includes:
-      - path: "{{ ((original_compose.include[0].path | default([])) + (compose_files | default([]))) | unique }}"
+      - path: >-
+          {{
+            (
+              (
+                (original_compose.include | default([]))[0].path | default([])
+                is string
+                and [ (original_compose.include | default([]))[0].path ]
+                or (original_compose.include | default([]))[0].path | default([])
+              )
+              + (compose_files | default([]))
+            )
+            | unique
+          }}
 
 - name: Update compose content
   set_fact:

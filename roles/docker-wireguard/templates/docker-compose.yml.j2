@@ -1,6 +1,6 @@
 services:
   {{wg_tunnel_name}}:
-    restart: always
+    restart: unless-stopped
     build:
       context: {{wg_target_dir}}/wg-tunnel
     cap_add:
@@ -30,7 +30,7 @@ services:
 {% if 'compose_service' in wg_interface %}
     depends_on:
       {{wg_interface['compose_service']}}:
-        condition: service_healthy
+        condition: service_started
         restart: true
 {% if 'port' in wg_interface['wg_config'] and ((wg_interface['wg_config']['port'] | int(0)) > 0) %}
   {{wg_interface['compose_service']}}:
@@ -40,23 +40,16 @@ services:
 
 
 {% endif %}
-{% if 'compose_service' not in wg_interface %}
-  {{wg_tunnel_name}}_frr:
-    restart: always
-    cap_add:
-      - CAP_NET_RAW
-      - NET_ADMIN
-      - SYS_ADMIN
-    privileged: false
-    image: quay.io/frrouting/frr:9.1.0
 
-    network_mode: "service:{{wg_tunnel_name}}"
+#  {{wg_tunnel_name}}_frr:
+#    restart: always
+#    cap_add:
+#      - CAP_NET_RAW
+#      - NET_ADMIN
+#      - SYS_ADMIN
+#    privileged: false
+#    image: quay.io/frrouting/frr:9.1.0
+#    network_mode: "service:{{wg_tunnel_name}}"
+#    volumes:
+#      - {{wg_target_dir}}/frr:/etc/frr:rw
 
-    depends_on:
-      {{wg_tunnel_name}}:
-        condition: service_started
-        restart: true
-    volumes:
-      - {{wg_target_dir}}/frr:/etc/frr:rw
-
-{% endif %}

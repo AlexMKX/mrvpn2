@@ -1,0 +1,421 @@
+---
+# MRVPN2 OIDC Configuration Playbook
+# Manual OIDC provider configuration for Firezone
+# Run separately from main deployment
+
+- name: Configure OIDC for Firezone
+  hosts: "{{ target_host | default('vpn_example_com') }}"
+  become: true
+  gather_facts: true
+  any_errors_fatal: false
+  max_fail_percentage: 50
+
+  vars_files:
+    - deployment-config.yml
+    - mrvpn_config.yml
+
+  vars:
+    playbook_dir: "{{ ansible_env.PWD | default(ansible_env.PWD) | default('.') }}"
+    oidc_provider: "{{ oidc_provider | default('yandex') }}"  # yandex, google, zitadel
+    force_reconfigure: "{{ force_reconfigure | default(false) }}"
+    zitadel_enabled: "{{ zitadel_enabled | default(false) }}"
+    zitadel_admin_password: "{{ lookup('env', 'ZITADEL_ADMIN_PASSWORD') }}"
+
+  pre_tasks:
+    - name: Validate OIDC configuration
+      assert:
+        that:
+          - mrvpn_config.firezone.fz_oidc is defined
+          - mrvpn_config.firezone.fz_oidc[oidc_provider] is defined
+          - mrvpn_config.firezone.fz_oidc[oidc_provider].enabled == true
+          - mrvpn_config.firezone.fz_oidc[oidc_provider].client_id is defined
+          - mrvpn_config.firezone.fz_oidc[oidc_provider].client_secret is defined
+          - mrvpn_config.firezone.fz_oidc[oidc_provider].discovery_document_uri is defined
+          - mrvpn_config.firezone.fz_oidc[oidc_provider].allowed_domains is defined
+          - mrvpn_config.firezone.fz_oidc[oidc_provider].allowed_domains | length > 0
+          - mrvpn_config.firezone.fz_oidc[oidc_provider].allowed_emails is defined or mrvpn_config.firezone.fz_oidc[oidc_provider].allowed_domains is defined
+          - (oidc_provider != 'zitadel') or (lookup('env', 'ZITADEL_ADMIN_PASSWORD') | length > 0)
+        fail_msg: "OIDC configuration for {{ oidc_provider }} is incomplete (missing client_id, client_secret, discovery_document_uri, allowed_domains, allowed_emails, or ZITADEL_ADMIN_PASSWORD for Zitadel)"
+
+    - name: Display OIDC configuration info
+      debug:
+        msg: |
+          OIDC Configuration for Firezone
+          ==================================
+
+          Provider: {{ oidc_provider }}
+          Server URL: {{ mrvpn_config.firezone.fz_server_url }}
+          Discovery Document: {{ mrvpn_config.firezone.fz_oidc[oidc_provider].discovery_document_uri }}
+          Client ID: {{ mrvpn_config.firezone.fz_oidc[oidc_provider].client_id }}
+          Allowed Domains: {{ mrvpn_config.firezone.fz_oidc[oidc_provider].allowed_domains | join(', ') }}
+          Allowed Emails: {{ mrvpn_config.firezone.fz_oidc[oidc_provider].allowed_emails | default([]) | join(', ') }}
+          Force reconfigure: {{ force_reconfigure }}
+
+          DEBUG INFO:
+          oidc_config defined: {{ mrvpn_config.firezone.fz_oidc[oidc_provider] is defined }}
+          oidc_config enabled: {{ mrvpn_config.firezone.fz_oidc[oidc_provider].enabled | default('undefined') }}
+          container_ready: {{ fz_firezone_container_id is defined and fz_firezone_container_id != '' and fz_firezone_container_id != 'None' }}
+
+  tasks:
+    - name: Get Firezone container info
+      community.docker.docker_container_info:
+        name: "{{ item }}"
+      register: container_info
+      failed_when: false
+      loop:
+        - "firezone-firezone-1"
+        - "{{ mrvpn_config.mrvpn_base_dir | basename }}-firezone-1"
+        - "firezone_firezone_1"
+        - "{{ mrvpn_config.mrvpn_base_dir | basename }}_firezone_1"
+
+    - name: Set Firezone container ID
+      set_fact:
+        fz_firezone_container_id: >-
+          {{ (container_info.results | selectattr('exists', 'equalto', true) |
+              selectattr('container', 'defined') |
+              selectattr('container.Id', 'defined') |
+              selectattr('container.State.Running', 'equalto', true) |
+              map(attribute='container.Id') | first | default('')) }}
+      when: container_info.results is defined
+
+    - name: Check if Firezone container is running
+      fail:
+        msg: "Firezone container is not running. Please start Firezone first."
+      when: fz_firezone_container_id == '' or fz_firezone_container_id == 'None'
+
+    - name: Get API token
+      community.docker.docker_container_exec:
+        container: "{{ fz_firezone_container_id }}"
+        command: bin/create-api-token
+      register: token_result
+      when: fz_firezone_container_id is defined and fz_firezone_container_id != '' and fz_firezone_container_id != 'None'
+      failed_when: false
+
+    - name: Set API token
+      set_fact:
+        fz_api_token: "{{ token_result.stdout | default('') | trim }}"
+      no_log: true
+      when: token_result is defined and token_result.rc is defined and token_result.rc == 0
+
+    - name: Check if API token was obtained
+      fail:
+        msg: "Failed to obtain Firezone API token"
+      when: fz_api_token is not defined or fz_api_token == ''
+
+    - name: Ensure configuration is retrievable
+      ansible.builtin.uri:
+        url: "{{ mrvpn_config.firezone.fz_server_url }}/v0/configuration"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ fz_api_token }}"
+          Content-Type: application/json
+        status_code: [200, 404, 500, 502, 503]
+        timeout: 30
+      register: config
+      until: config is defined and config.status is defined and config.status == 200
+      retries: 10
+      delay: 5
+      ignore_errors: yes
+
+    - name: Check configuration retrieval
+      fail:
+        msg: "Failed to retrieve Firezone configuration"
+      when: config is not defined or config.status != 200
+
+    - name: Debug OIDC block conditions
+      debug:
+        msg: |
+          OIDC Block Debug:
+          oidc_provider: {{ oidc_provider | default('undefined') }}
+          oidc_config defined: {{ oidc_config is defined if oidc_config is defined else 'oidc_config undefined' }}
+          oidc_config.enabled: {{ oidc_config.enabled if (oidc_config is defined and oidc_config.enabled is defined) else 'enabled undefined' }}
+          condition result: {{ (oidc_config is defined and oidc_config.enabled == true) if oidc_config is defined else 'cannot evaluate' }}
+          zitadel_enabled: {{ zitadel_enabled }}
+
+    - name: Configure OIDC provider
+      block:
+        - name: Set OIDC configuration variables
+          set_fact:
+            oidc_config: "{{ mrvpn_config.firezone.fz_oidc[oidc_provider] }}"
+            oidc_configs:
+              - name: "{{ oidc_provider }}"
+                # For Zitadel use obtained credentials
+                discovery_document_uri: "{{ 'http://localhost:8080/.well-known/openid-configuration' if oidc_provider == 'zitadel' else oidc_config.discovery_document_uri }}"
+                client_id: "{{ firezone_key.json.clientId if (oidc_provider == 'zitadel' and firezone_key.json.clientId is defined) else oidc_config.client_id }}"
+                client_secret: "{{ firezone_key.json.clientSecret if (oidc_provider == 'zitadel' and firezone_key.json.clientSecret is defined) else oidc_config.client_secret }}"
+                redirect_uri: "{{ mrvpn_config.firezone.fz_server_url }}/auth/oidc/{{ oidc_provider }}/callback"
+                response_type: "{{ oidc_config.response_type | default('code') }}"
+                scope: "{{ oidc_config.scope | default('openid email profile') }}"
+                label: "{{ oidc_provider }}"
+                id: "{{ oidc_provider }}"
+                auto_create_users: true
+                identifier_attribute: "{{ oidc_config.identifier_attribute | default(omit) }}"
+                email_attribute: "{{ oidc_config.email_attribute | default(omit) }}"
+                # Domain restriction for allowed email domains
+                allowed_domains: "{{ oidc_config.allowed_domains | default(omit) }}"
+                # Specific allowed email addresses (whitelist)
+                allowed_emails: "{{ oidc_config.allowed_emails | default(omit) }}"
+
+        - name: Create .well-known directory
+          file:
+            path: "/var/www/html/.well-known"
+            state: directory
+            mode: "0755"
+          when: oidc_provider == 'yandex'
+
+        - name: Create Yandex discovery document
+          copy:
+            content: |
+              {
+                "issuer": "https://oauth.yandex.ru",
+                "authorization_endpoint": "https://oauth.yandex.ru/authorize",
+                "token_endpoint": "https://oauth.yandex.ru/token",
+                "userinfo_endpoint": "https://login.yandex.ru/info",
+                "scopes_supported": ["login:email", "login:info", "login:birthday", "login:avatar"],
+                "response_types_supported": ["code"],
+                "subject_types_supported": ["public"],
+                "id_token_signing_alg_values_supported": ["RS256"],
+                "token_endpoint_auth_methods_supported": ["client_secret_post", "client_secret_basic"]
+              }
+            dest: "/var/www/html/.well-known/yandex-openid-configuration.json"
+            mode: "0644"
+          when: oidc_provider == 'yandex'
+
+        - name: Set configuration with OIDC
+          set_fact:
+            openid:
+              openid_connect_providers: "{{ oidc_configs }}"
+            configuration:
+              configuration: "{{ config.json.data | default({}) | ansible.utils.remove_keys(target=['openid_connect_providers']) | combine(openid) }}"
+
+        - name: Set config with logo
+          set_fact:
+            config_logo:
+              configuration: "{{ config.json.data | default({}) | ansible.utils.remove_keys(target=['openid_connect_providers']) | combine(openid) | ansible.utils.remove_keys(target=['logo']) | combine({'logo': {'url': mrvpn_config.firezone.fz_server_url + '/images/logo-text.svg','data':None, 'type':None }}) }}"
+
+        - name: Apply OIDC configuration
+          ansible.builtin.uri:
+            method: PATCH
+            body: "{{ config_logo }}"
+            module_defaults:
+              ansible.builtin.uri:
+                url: "{{ mrvpn_config.firezone.fz_server_url }}/v0/configuration"
+                headers:
+                  Authorization: "Bearer {{ fz_api_token }}"
+                  Content-Type: application/json
+                body_format: json
+          register: oidc_result
+          failed_when: oidc_result.status != 200
+
+        - name: Verify OIDC provider configuration
+          ansible.builtin.uri:
+            url: "{{ mrvpn_config.firezone.fz_server_url }}/v0/configuration"
+            method: GET
+            headers:
+              Authorization: "Bearer {{ fz_api_token }}"
+          register: config_check
+          failed_when: config_check.status != 200
+
+        - name: Check if Yandex provider is configured
+          debug:
+            msg: |
+              OIDC Configuration Verification:
+              ================================
+
+              Current OIDC Providers: {{ (config_check.json.data.openid_connect_providers | default([])) | map(attribute='name') | list }}
+
+              Yandex configured: {{ (config_check.json.data.openid_connect_providers | default([])) | selectattr('name', 'equalto', 'yandex') | list | length > 0 }}
+
+              Full OIDC config: {{ config_check.json.data.openid_connect_providers | default('No providers configured') }}
+
+        - name: Display OIDC configuration result
+          debug:
+            msg: |
+              OIDC Configuration Applied Successfully!
+              ===========================================
+
+              Provider: {{ oidc_provider }}
+              Status: {{ oidc_result.status }}
+              Response: {{ oidc_result.json | default('No response body') }}
+
+              Next steps:
+              1. Access {{ mrvpn_config.firezone.fz_server_url }}
+              2. Go to Settings > Identity Providers
+              3. Verify {{ oidc_provider | title }} provider is configured
+              4. Test authentication with {{ oidc_provider | title }} account
+
+      when: oidc_config is defined and oidc_config.enabled == true
+
+    - name: Configure Zitadel OIDC proxy
+      block:
+        - name: Display Zitadel setup info
+          debug:
+            msg: |
+              Setting up Zitadel as OIDC proxy for Yandex
+              ============================================
+              This will create Zitadel instance that proxies Yandex OIDC
+              Then Firezone will connect to Zitadel instead of Yandex directly
+
+        - name: Create Zitadel directory
+          file:
+            path: "/opt/zitadel"
+            state: directory
+            mode: "0755"
+
+        - name: Create Zitadel docker-compose file
+          template:
+            src: templates/zitadel-docker-compose.yml.j2
+            dest: "/opt/zitadel/docker-compose.yml"
+            mode: "0644"
+
+        - name: Create Zitadel config file
+          template:
+            src: templates/zitadel-config.yaml.j2
+            dest: "/opt/zitadel/zitadel-config.yaml"
+            mode: "0644"
+
+        - name: Create Zitadel init steps file
+          template:
+            src: templates/zitadel-init-steps.yaml.j2
+            dest: "/opt/zitadel/zitadel-init-steps.yaml"
+            mode: "0644"
+
+        - name: Start Zitadel
+          command: docker-compose up -d
+          args:
+            chdir: /opt/zitadel
+
+        - name: Wait for Zitadel to be ready
+          uri:
+            url: "http://localhost:8080/ui/console"
+            method: GET
+          register: zitadel_health
+          until: zitadel_health.status == 200
+          retries: 30
+          delay: 10
+          ignore_errors: yes
+
+        - name: Get Zitadel access token for API calls
+          uri:
+            url: "http://localhost:8080/oauth/v2/token"
+            method: POST
+            body_format: form-urlencoded
+            body:
+              grant_type: "client_credentials"
+              scope: "urn:zitadel:iam:org:project:id:zitadel:aud"
+            headers:
+              Authorization: "Basic {{ ('zitadel:' + zitadel_admin_password) | b64encode }}"
+          register: zitadel_token
+          ignore_errors: yes
+          retries: 5
+          delay: 5
+
+        - name: Configure Yandex as external IDP in Zitadel
+          uri:
+            url: "http://localhost:8080/admin/v1/idps/oidc"
+            method: POST
+            headers:
+              Authorization: "Bearer {{ zitadel_token.json.access_token }}"
+            body_format: json
+            body:
+              name: "Yandex"
+              issuer: "https://oauth.yandex.ru"
+              clientId: "{{ lookup('env', 'YANDEX_CLIENT_ID') }}"
+              clientSecret: "{{ lookup('env', 'YANDEX_CLIENT_SECRET') }}"
+              scopes: ["openid", "email"]
+              isIdTokenMapping: true
+          register: yandex_idp
+          ignore_errors: yes
+          retries: 3
+          delay: 10
+
+        - name: Create Firezone application in Zitadel
+          uri:
+            url: "http://localhost:8080/management/v1/projects/zitadel/applications"
+            method: POST
+            headers:
+              Authorization: "Bearer {{ zitadel_token.json.access_token }}"
+            body_format: json
+            body:
+              name: "Firezone"
+              redirectUris: ["{{ mrvpn_config.firezone.fz_server_url }}/auth/oidc/firezone/callback"]
+              postLogoutRedirectUris: ["{{ mrvpn_config.firezone.fz_server_url }}"]
+              appType: "WEB"
+              authMethodType: "OIDC_PKCE"
+              oidcConfig:
+                redirectUris: ["{{ mrvpn_config.firezone.fz_server_url }}/auth/oidc/firezone/callback"]
+                responseTypes: ["CODE"]
+                grantTypes: ["AUTHORIZATION_CODE"]
+                appType: "WEB"
+                authMethodType: "PKCE"
+          register: firezone_app
+          ignore_errors: yes
+          retries: 3
+          delay: 10
+
+        - name: Get Firezone client credentials
+          uri:
+            url: "http://localhost:8080/management/v1/projects/zitadel/applications/{{ firezone_app.json.id }}/api_keys"
+            method: POST
+            headers:
+              Authorization: "Bearer {{ zitadel_token.json.access_token }}"
+            body_format: json
+            body:
+              expirationDate: null
+          register: firezone_key
+          ignore_errors: yes
+          retries: 3
+          delay: 10
+
+        - name: Get Zitadel OIDC discovery document
+          uri:
+            url: "http://localhost:8080/.well-known/openid-configuration"
+            method: GET
+          register: zitadel_discovery
+
+        - name: Display Zitadel OIDC info
+          debug:
+            msg: |
+              Zitadel OIDC Proxy FULLY CONFIGURED!
+              =====================================
+              URL: http://localhost:8080
+              Admin: admin@zitadel.local / {{ zitadel_admin_password }}
+              OIDC Discovery: http://localhost:8080/.well-known/openid-configuration
+
+              Firezone Credentials (Auto-generated):
+              - Client ID: {{ firezone_key.json.clientId | default('Check Zitadel console') }}
+              - Client Secret: {{ firezone_key.json.clientSecret | default('Check Zitadel console') }}
+
+              Firezone will automatically be configured to use these credentials!
+
+      when: oidc_provider == 'zitadel' and zitadel_enabled
+
+    - name: Display configuration summary
+      debug:
+        msg: |
+          OIDC Configuration Complete!
+          ===============================
+
+          Provider: {{ oidc_provider }}
+          Server: {{ mrvpn_config.firezone.fz_server_url }}
+          Allowed Domains: {{ mrvpn_config.firezone.fz_oidc[oidc_provider].allowed_domains | join(', ') }}
+          Allowed Emails: {{ mrvpn_config.firezone.fz_oidc[oidc_provider].allowed_emails | default([]) | join(', ') }}
+          Status: Configured
+
+          To test the configuration:
+          1. Open {{ mrvpn_config.firezone.fz_server_url }} in your browser
+          2. You should see "Sign in with {{ oidc_provider | title }}" button
+          3. Click the button and authenticate with your {{ oidc_provider | title }} account
+          4. Only users with allowed domains/emails will be able to sign in
+          5. Verify user is created in Firezone
+
+  post_tasks:
+    - name: Clean up temporary facts
+      set_fact:
+        fz_firezone_container_id: null
+        fz_api_token: null
+        config: null
+        configuration: null
+        config_logo: null
+        oidc_configs: null
+        openid: null

@@ -182,7 +182,7 @@ async def async_main():
 if __name__ == '__main__':
     import os
 
-    if srv := os.environ.get('PYDEV'):
+    if srv := os.environ.get('PYDEV', False):
         try:
             import pydevd_pycharm
 
