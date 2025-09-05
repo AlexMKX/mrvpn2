@@ -1,0 +1,68 @@
+# Zitadel Docker Compose Template
+# This template deploys Zitadel as an OIDC identity provider
+# Zitadel acts as a proxy between your application and external OIDC providers
+# Customize passwords, domains, and ports for your environment
+
+version: '3.8'
+
+services:
+  zitadel:
+    image: ghcr.io/zitadel/zitadel:latest
+    # Start Zitadel with initialization configuration
+    command: start-from-init --config /zitadel-config.yaml --tlsMode disabled
+    ports:
+      - "8080:8080"  # Change port if needed
+    volumes:
+      # Mount configuration files
+      - ./zitadel-config.yaml:/zitadel-config.yaml
+      - ./zitadel-init-steps.yaml:/zitadel-init-steps.yaml
+      # Persistent data volume
+      - zitadel-data:/data
+    environment:
+      # PostgreSQL database connection
+      - ZITADEL_DATABASE_POSTGRES_HOST=postgres
+      - ZITADEL_DATABASE_POSTGRES_PORT=5432
+      - ZITADEL_DATABASE_POSTGRES_DATABASE=zitadel
+      - ZITADEL_DATABASE_POSTGRES_USER_USERNAME=zitadel
+      - ZITADEL_DATABASE_POSTGRES_USER_PASSWORD=zitadel  # Change for production
+      - ZITADEL_DATABASE_POSTGRES_USER_SSL_MODE=disable  # Enable SSL in production
+      # Admin user credentials
+      - ZITADEL_FIRSTINSTANCE_ORG_MACHINE_MACHINE_USERNAME=admin
+      - ZITADEL_FIRSTINSTANCE_ORG_MACHINE_MACHINE_PASSWORD={{ zitadel_admin_password }}
+      # External access configuration
+      - ZITADEL_EXTERNALDOMAIN=localhost  # Change to your domain
+      - ZITADEL_EXTERNALPORT=8080
+      - ZITADEL_EXTERNALSECURE=false      # Set to true for HTTPS
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - zitadel
+
+  postgres:
+    image: postgres:15
+    environment:
+      # Database credentials - change passwords for production
+      - POSTGRES_DB=zitadel
+      - POSTGRES_USER=zitadel
+      - POSTGRES_PASSWORD=zitadel
+    volumes:
+      # Persistent database data
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - zitadel
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zitadel"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+# Persistent volumes for data storage
+volumes:
+  zitadel-data:
+  postgres-data:
+
+# Isolated network for Zitadel services
+networks:
+  zitadel:
+    driver: bridge

@@ -1,0 +1,10 @@
+[Peer]
+PublicKey = {{peer.public}}
+AllowedIPs = 224.0.0.0/4, {{peer.allowed_ips}}
+{% if "psk" in peer.keys() %}
+PresharedKey = {{peer.psk}}
+{% endif %}
+{% if "endpoint" in peer.keys() %}
+Endpoint = {{peer.endpoint}}
+{% endif %}
+PersistentKeepalive = 25

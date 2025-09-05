@@ -1,0 +1,19 @@
+routes:
+  - interface: _DEFAULT
+    metric: 100
+    geo:
+      - country='AZ'
+    domains:
+      - .*\.ru
+  - interface: wg_home_outer
+    geo:
+      - country='AM'
+    domains:
+      - .*\.am
+  - interface: wg_home_outer
+    static:
+      - 0.0.0.0/0
+interfaces:
+    - wg-firezone
+pbr_mark: 200
+table: 200

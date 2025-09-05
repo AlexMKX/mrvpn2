@@ -1,0 +1,13 @@
+websockets
+pyroute2
+pydantic
+pydantic-settings
+PyYaml
+jinja2
+pyroute2.nftables
+expiring_lru_cache
+more_itertools
+duckdb
+duckdb-extensions
+jsonschema
+intervaltree

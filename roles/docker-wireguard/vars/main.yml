@@ -1,0 +1,6 @@
+---
+# vars file for docker-wireguard
+wg_interface:
+
+#wg_tunnel_serivces: {}
+wg_tunnel_config: "{{undef()}}"

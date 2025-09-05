@@ -1,0 +1,8 @@
+---
+# vars file for mrvpn2
+
+
+wg_inventory_host:
+mrvpn_compose_files: []
+mrvpn_own_tunnels: []
+mrvpn_tunnels_compose_files: []

@@ -1,0 +1,430 @@
+# installs Firezone
+# returns fz_main_compose_file - path to compose
+
+---
+- assert:
+    that: fz_admin_password is not defined or fz_admin_password|length>=12
+#todo: check for netaddr on localhost
+- name: Ensure firezone_dir exists
+  ansible.builtin.file:
+    path: "{{ fz_firezone_dir }}"
+    state: directory
+
+- stat:
+    path: "{{fz_main_compose_file}}"
+  register: fz_main_compose_file_stat
+
+- name: Stop stack
+  community.docker.docker_compose_v2:
+    project_src: "{{ fz_firezone_dir }}"
+    state: absent
+  when: fz_main_compose_file_stat['stat']['exists']
+
+- name: Uninstall stack
+  block:
+    - debug:
+        msg: "{{ansible_run_tags}}"
+    - community.docker.docker_compose_v2:
+        project_src: "{{ fz_firezone_dir }}"
+        state: absent
+        remove_orphans: yes
+        remove_volumes: yes
+      when: fz_main_compose_file_stat['stat']['exists']
+
+    - name: Remove firezone directory
+      ansible.builtin.file:
+        path: "{{ fz_firezone_dir }}"
+        state: absent
+  when: "'cleanup' in ansible_run_tags"
+
+
+- name: Ensure firezone_dir exists
+  ansible.builtin.file:
+    path: "{{ fz_firezone_dir }}"
+    state: directory
+
+- stat:
+    path: "{{fz_main_compose_file}}"
+  register: fz_main_compose_file_stat
+
+- name: Copy files
+  copy:
+    src: "files/"
+    dest: "{{ fz_firezone_dir }}"
+
+- name: Write env file
+  ansible.builtin.template:
+    dest: "{{ fz_firezone_dir }}/.env"
+    src: templates/firezone.env.j2
+
+- name: Write credentils env file
+  ansible.builtin.template:
+    dest: "{{ fz_firezone_dir }}/credentials.env"
+    src: templates/credentials.env.j2
+    force: no
+
+- name: Read credentials env file
+  ansible.builtin.slurp:
+    src: "{{ fz_firezone_dir }}/credentials.env"
+  register: credentials_env_content
+- name: Put credentials into env file
+  ansible.builtin.blockinfile:
+    content: "{{ credentials_env_content['content'] | b64decode }}"
+    dest: "{{ fz_firezone_dir }}/.env"
+
+- name: Write compose file
+  ansible.builtin.template:
+    dest: "{{ fz_firezone_dir }}/docker-compose.yml"
+    src: templates/docker-compose.yml.j2
+  register: fz_compose_file
+
+- name: Pull Docker images before starting
+  command: docker pull firezone/firezone:0.7.30
+  register: pull_result
+  ignore_errors: yes
+
+- name: Debug Docker pull result
+  debug:
+    msg: "Docker pull result: rc={{ pull_result.rc }}, stdout={{ pull_result.stdout | default('') }}, stderr={{ pull_result.stderr | default('') }}"
+  when: pull_result is defined
+
+- name: Check if additional Docker images exist locally
+  command: docker images --format "table {{.Repository}}:{{.Tag}}" | grep -E "^{{ item }}$"
+  register: image_check
+  ignore_errors: yes
+  loop:
+    - postgres:15
+    - caddy:2
+    - willfarrell/autoheal
+
+- name: Pull additional Docker images to avoid rate limits
+  command: docker pull {{ item.item }}
+  register: additional_pull_result
+  ignore_errors: yes
+  loop: "{{ image_check.results | selectattr('rc', 'equalto', 1) | map(attribute='item') | list }}"
+  retries: 5
+  delay: 30
+  until: additional_pull_result is not failed
+  when: image_check.results | selectattr('rc', 'equalto', 1) | length > 0
+
+- name: Debug additional Docker pull results
+  debug:
+    msg: "Additional Docker pull result for {{ item.item }}: rc={{ item.rc }}, stderr={{ item.stderr | default('') }}"
+  loop: "{{ additional_pull_result.results | default([]) }}"
+  when: additional_pull_result is defined and additional_pull_result.results is defined
+
+- name: Ensure stack is running
+  community.docker.docker_compose_v2:
+    project_src: "{{ fz_firezone_dir }}"
+    state: present
+    wait: yes
+    pull: missing
+  register: result
+  retries: 5
+  delay: 30
+  until: result is not failed
+  ignore_errors: yes
+
+- name: Check Docker Compose result
+  debug:
+    msg: |
+      Docker Compose result:
+      - Return code: {{ result.rc | default('N/A') }}
+      - Changed: {{ result.changed | default('N/A') }}
+      - Failed: {{ result.failed | default('N/A') }}
+      {% if result.stderr is defined and result.stderr %}
+      - Error: {{ result.stderr }}
+      {% endif %}
+  when: result is defined
+
+- name: Fail if Docker Compose failed after retries
+  fail:
+    msg: "Firezone Docker Compose failed after 5 retries. Check Docker logs, disk space, and network connectivity. If you see 'toomanyrequests' errors, wait a few hours before retrying or consider using a Docker Hub account."
+  when: result is failed
+
+- name: Wait for Firezone to be healthy
+  command: docker ps --filter "name=firezone-firezone" --filter "status=running" --format 'table {{.Names}}\t{{.Status}}'
+  register: firezone_status
+  retries: 5
+  delay: 15
+  until: firezone_status.stdout_lines | length > 1
+  ignore_errors: yes
+
+- name: Debug Firezone status
+  debug:
+    msg: "Firezone container status: {{ firezone_status.stdout_lines | default(['No containers found']) }}"
+
+- name: Get Firezone container info
+  community.docker.docker_container_info:
+    name: "{{ item }}"
+  register: container_info
+  failed_when: false
+  loop:
+    - "firezone-firezone-1"
+    - "{{ fz_firezone_dir | basename }}-firezone-1"
+    - "firezone_firezone_1"
+    - "{{ fz_firezone_dir | basename }}_firezone_1"
+
+- set_fact:
+    fz_firezone_container_id: >-
+      {{ (container_info.results | selectattr('exists', 'equalto', true) |
+          selectattr('container', 'defined') |
+          selectattr('container.Id', 'defined') |
+          selectattr('container.State.Running', 'equalto', true) |
+          map(attribute='container.Id') | first | default('')) }}
+  when: container_info.results is defined
+
+- name: Ensure admin account exists
+  community.docker.docker_container_exec:
+    container: "{{ fz_firezone_container_id }}"
+    command: "/app/bin/create-or-reset-admin"
+  when: fz_firezone_container_id is defined and fz_firezone_container_id != '' and fz_firezone_container_id != 'None'
+  failed_when: false
+
+- name: Wait for firezone to be ready
+  ansible.builtin.wait_for:
+    host: "{{ fz_server_url | regex_replace('^https?://', '') | regex_replace('/.*$', '') }}"
+    port: "{{ '443' if fz_server_url.startswith('https') else '80' }}"
+    delay: 10
+    timeout: 180
+  ignore_errors: yes
+
+- name: Wait for Firezone container to be ready
+  ansible.builtin.wait_for:
+    timeout: 30
+  when: fz_firezone_container_id is defined and fz_firezone_container_id != '' and fz_firezone_container_id != 'None'
+  ignore_errors: yes
+
+- name: Setup token management variables
+  set_fact:
+    token_result: null
+    token_result_retry: null
+    container_ready: "{{ fz_firezone_container_id is defined and fz_firezone_container_id != '' and fz_firezone_container_id != 'None' }}"
+  when: fz_firezone_container_id is defined
+
+- name: Manage API token (saved or new)
+  block:
+    - name: Check if saved API token exists
+      stat:
+        path: "{{ fz_firezone_dir }}/fz-api-token"
+      register: token_file_stat
+
+    - name: Read and validate saved token
+      block:
+        - name: Read saved token content
+          slurp:
+            src: "{{ fz_firezone_dir }}/fz-api-token"
+          register: saved_token_content
+
+        - name: Check token freshness
+          set_fact:
+            saved_token_age_hours: "{{ (((ansible_date_time.epoch | int) - (token_file_stat.stat.mtime | int)) / 3600) | round(1) }}"
+            token_is_fresh: "{{ ((ansible_date_time.epoch | int) - (token_file_stat.stat.mtime | int)) / 3600 < 12 }}"
+          when: saved_token_content.content is defined
+
+        - name: Use fresh saved token
+          set_fact:
+            fz_api_token: "{{ saved_token_content.content | b64decode | trim }}"
+            token_source: "saved"
+          when: saved_token_content.content is defined and token_is_fresh | default(false)
+
+        - name: Test saved token validity
+          ansible.builtin.uri:
+            url: "{{ fz_server_url }}/v0/configuration"
+            method: GET
+            headers:
+              Authorization: "Bearer {{ fz_api_token }}"
+            timeout: 10
+          register: token_test
+          ignore_errors: true
+          when: fz_api_token is defined and fz_api_token != ''
+
+        - name: Invalidate invalid saved token
+          set_fact:
+            fz_api_token: ""
+            token_source: "saved_invalid"
+          when: token_test is defined and token_test.status != 200
+
+      when: token_file_stat.stat.exists
+
+    - name: Log token decision
+      debug:
+        msg: |
+          API Token Management:
+          ====================
+          Token source: {{ token_source | default('new') }}
+          Saved token exists: {{ token_file_stat.stat.exists | default(false) }}
+          Saved token age: {{ saved_token_age_hours | default('N/A') }} hours
+          Token is fresh: {{ token_is_fresh | default(false) }}
+          Token validity test: {{ 'PASSED' if (token_test is not defined or token_test.status == 200) else 'FAILED' }}
+
+    - name: Create new API token if needed
+      community.docker.docker_container_exec:
+        container: "{{ fz_firezone_container_id }}"
+        command: bin/create-api-token
+      register: token_result
+      failed_when: false
+      when: fz_api_token is not defined or fz_api_token == ''
+
+    - name: Set API token from result
+      set_fact:
+        fz_api_token: "{{ token_result.stdout | default('') | trim }}"
+        token_source: "new"
+        no_log: true
+      when: >
+        token_result is defined and
+        token_result.rc is defined and
+        token_result.rc == 0 and
+        token_result.stdout is defined and
+        (token_result.stdout | default('') | trim) != ''
+
+    - name: Retry token creation if first attempt failed
+      community.docker.docker_container_exec:
+        container: "{{ fz_firezone_container_id }}"
+        command: bin/create-api-token
+      register: token_result_retry
+      failed_when: false
+      when: >
+        (fz_api_token is not defined or fz_api_token == '') and
+        (token_result is not defined or
+         (token_result.rc is defined and token_result.rc != 0) or
+         (token_result.stdout is defined and (token_result.stdout | default('') | trim) == ''))
+
+    - name: Set API token from retry
+      set_fact:
+        fz_api_token: "{{ token_result_retry.stdout | default('') | trim }}"
+        token_source: "new_retry"
+        no_log: true
+      when: >
+        token_result_retry is defined and
+        token_result_retry.rc is defined and
+        token_result_retry.rc == 0 and
+        token_result_retry.stdout is defined and
+        (token_result_retry.stdout | default('') | trim) != ''
+
+  when: container_ready
+
+- name: Verify API token was obtained
+  assert:
+    that: fz_api_token is defined and fz_api_token != ''
+    fail_msg: "Failed to obtain API token for Firezone. Check container status and logs."
+  when: container_ready
+
+- name: Log successful token acquisition
+  debug:
+    msg: "API token obtained successfully ({{ token_source | default('new') }})"
+  when: fz_api_token is defined and fz_api_token != ''
+
+- name: Clean up old API tokens via API (optional)
+  ansible.builtin.uri:
+    url: "{{ fz_server_url }}/v0/tokens"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ fz_api_token }}"
+    timeout: 10
+  register: tokens_list
+  ignore_errors: true
+  when: fz_api_token is defined and fz_api_token != '' and token_source != 'saved'
+
+- name: Filter old tokens for deletion
+  set_fact:
+    old_tokens: "{{ (tokens_list.json.data | default([])) | selectattr('inserted_at', 'defined') | selectattr('inserted_at', '<', (ansible_date_time.epoch - 43200) | strftime('%Y-%m-%dT%H:%M:%SZ')) }}"
+  when: tokens_list is defined and tokens_list.json is defined and tokens_list.status == 200 and token_source != 'saved'
+
+- name: Delete old tokens
+  ansible.builtin.uri:
+    url: "{{ fz_server_url }}/v0/tokens/{{ item.id }}"
+    method: DELETE
+    headers:
+      Authorization: "Bearer {{ fz_api_token }}"
+    timeout: 10
+  loop: "{{ old_tokens | default([]) }}"
+  ignore_errors: true
+  when: old_tokens is defined and old_tokens | length > 0
+
+- name: Skip configuration setup if no API token
+  debug:
+    msg: "Skipping configuration setup - no API token available"
+  when: fz_api_token is not defined or fz_api_token == ''
+
+- block:
+    - name: Ensure configuration is retrievable
+      ansible.builtin.uri:
+        url: "{{ fz_server_url }}/v0/configuration"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ fz_api_token }}"
+          Content-Type: application/json
+        status_code: [200, 404, 500, 502, 503]
+        timeout: 30
+      register: config
+      until: config is defined and config.status is defined and config.status == 200
+      retries: 10
+      delay: 5
+      ignore_errors: yes
+      when: not ansible_check_mode and fz_api_token is defined and fz_api_token != ''
+
+    - name: Write API token to firezone directory
+      ansible.builtin.copy:
+        content: "{{ fz_api_token }}"
+        dest: "{{ fz_firezone_dir }}/fz-api-token"
+      when: fz_api_token is defined and fz_api_token != ''
+
+    # OIDC configuration removed from automatic deployment
+    # Use configure_oidc.yml playbook for manual OIDC setup
+
+    - ansible.builtin.set_fact:
+        config_logo:
+          configuration: "{{config['configuration']|ansible.utils.remove_keys(target=['logo'])| combine({'logo': {'url': fz_server_url + '/images/logo-text.svg','data':None, 'type':None } } )}}"
+      when: config is defined and config.configuration is defined and not ansible_check_mode
+
+    - name: Update Firezone configuration
+      ansible.builtin.uri:
+        method: PATCH
+        body: "{{ config_logo }}"
+      when: config_logo is defined and not ansible_check_mode
+      module_defaults:
+        ansible.builtin.uri:
+          url: "{{ fz_server_url }}/v0/configuration"
+          headers:
+            Authorization: Bearer {{ fz_api_token }}
+            Content-Type: application/json
+          body_format: json
+
+- name: Restarting stack
+  community.docker.docker_compose_v2:
+    project_src: "{{ fz_firezone_dir }}"
+    state: restarted
+
+- name: Clean up temporary facts
+  ansible.builtin.set_fact:
+    fz_firezone_container_id: null
+    fz_api_token: null
+    config: null
+    configuration: null
+    config_logo: null
+    oidc_configs: null
+    openid: null
+
+- name: Restarting stack
+  community.docker.docker_compose_v2:
+    project_src: "{{ fz_firezone_dir }}"
+    state: restarted
+
+- name: Shutting down the stack
+  community.docker.docker_compose_v2:
+    project_src: "{{ fz_firezone_dir }}"
+    state: absent
+
+- name: Clean up temporary facts
+  ansible.builtin.set_fact:
+    fz_firezone_container_id: null
+    fz_api_token: null
+    credentials_env_content: null
+    token_result: null
+    config: null
+    configuration: null
+    config_logo: null
+    oidc_configs: null
+    openid: null
+

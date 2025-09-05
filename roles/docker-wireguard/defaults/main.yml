@@ -1,0 +1,9 @@
+---
+# defaults file for docker-wireguard
+wg_tunnel_name: "wireguard"
+wg_force_reconfig: False
+ansible_os_family: "{{ ansible_os_family | default('Debian') }}"
+wg_root_dir: "/opt/wireguard"
+wg_target_dir: "{{wg_root_dir}}/{{wg_tunnel_name}}"
+wg_compose_file: "{{wg_target_dir}}/docker-compose.yml"
+wg_tunnel_result: {}

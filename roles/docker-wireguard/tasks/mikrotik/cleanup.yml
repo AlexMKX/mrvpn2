@@ -1,0 +1,32 @@
+- community.routeros.command:
+    commands: "{{wg_interface['mikrotik_cleanup']}}"
+  delegate_to: "{{wg_inventory_host}}"
+  when: "'mikrotik_cleanup' in wg_interface"
+
+- name: Find Mikrotik entities
+  community.routeros.api:
+    extended_query:
+      attributes:
+        - .id
+        - comment
+      where:
+        - attribute: comment
+          is: "=="
+          value: "{{wg_tunnel_name}}"
+    path: "{{item}}"
+  loop:
+    - ip address
+    - ip route
+    - interface wireguard
+    - interface wireguard peers
+    - ip firewall mangle
+    - routing ospf interface-template
+    - routing ospf area
+    - routing ospf instance
+  register:
+    query_out
+- name: Remove Mikrotik Entities
+  community.routeros.api:
+    remove: "{{item.1['.id']}}"
+    path: "{{item.0['item']}}"
+  loop: "{{ query_out['results'] | subelements('msg') }}"

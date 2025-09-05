@@ -1,0 +1,31 @@
+---
+fz_config: {}
+## Firezone admin email
+fz_client_subnet: "{{fz_config['fz_client_subnet'] | default ('10.11.0.0/24')}}"
+fz_client_gateway: "{{fz_config['fz_client_gateway'] | default ('10.11.0.1')}}"
+# fz_admin, fz_admin_password, fz_wireguard_port, fz_firezone_dir, fz_server_url 
+# are now passed directly from the calling playbook to avoid recursion
+fz_firezone_https: "{{fz_config['fz_firezone_https'] | default (true)}}"
+fz_redeploy: false
+fz_custom_labels: "{{fz_config['fz_custom_labels'] | default ([])}}"
+fz_mgmt_subnet: "{{fz_config['fz_mgmt_subnet'] | default ()}}"
+fz_cleanup: false
+fz_oidc: "{{fz_config['fz_oidc'] | default (undef())}}"
+firezone_addon_ports: "{{fz_config['firezone_addon_ports'] | default ([])}}"
+fz_admin: "{{fz_config['fz_admin'] | default ('admin@example.com')}}"
+fz_admin_password: "{{fz_config['fz_admin_password']}}"
+fz_wireguard_port: "{{fz_config['fz_wireguard_port'] | default ('51620')}}"
+fz_server_url: "{{fz_config['fz_server_url'] | default ('https://localhost')}}"
+fz_firezone_dir: "{{fz_config['fz_firezone_dir'] | default ('/opt/firezone')}}"
+fz_main_compose_file: "{{fz_firezone_dir}}/docker-compose.yml"
+
+#firezone_redeploy: false
+#client_subnet: 172.31.224.0/20
+#wireguard_port: 51620
+#firezone_dir: /opt/firezone
+#firezone_https: true
+#mgmt_subnet: 172.30.201.0/24
+#custom_fz_labels:
+#  org.gfncis.conntrack_log_tag: "firezone-default"
+## the list of addon services. Use it to add more services (like conntack-log) to firezone
+#firezone_addon_ports: []

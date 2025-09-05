@@ -1,0 +1,53 @@
+---
+# Deployment Configuration for MRVPN2
+# This file defines which services to deploy and their configuration
+
+deployment_config:
+  services:
+    firezone:
+      deploy: true
+    wireguard:
+      deploy: true
+    mrvpn:
+      deploy: true
+
+  # Network configuration
+  network:
+    vpn_subnet: "10.0.100.0/24"
+    vpn_gateway: "10.0.100.1"
+    wg_port: "51620"
+
+  # Docker configuration
+  docker:
+    compose_version: "2.33.1"
+    restart_policy: "always"
+
+  # Firewall configuration
+  firewall:
+    enable: true
+    policy: "deny"
+    allowed_ports:
+      - port: "22"
+        proto: "tcp"
+        comment: "SSH"
+      - port: "80"
+        proto: "tcp"
+        comment: "HTTP"
+      - port: "443"
+        proto: "tcp"
+        comment: "HTTPS"
+      - port: "51620"
+        proto: "udp"
+        comment: "WireGuard"
+    # Internal network rules
+    allowed_networks:
+      - source: "10.0.100.0/24"  # out
+        dest: "192.168.100.0/24"  # in
+        proto: "tcp/udp"
+        ports: "0-65535"
+        comment: "VPN to internal network"
+
+  # Monitoring and logging
+  monitoring:
+    enable: false
+    log_level: "info"

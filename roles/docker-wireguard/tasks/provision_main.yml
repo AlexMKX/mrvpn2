@@ -1,0 +1,71 @@
+- block:
+    - set_fact:
+        wg_inventory_host: "{{inventory_hostname}}"
+      when: wg_inventory_host is not defined
+
+
+    - name: "Provision Mikrotik {{wg_inventory_host}}"
+      block:
+
+        - include_tasks: mikrotik/main.yml
+          vars:
+            wg_interface: "{{wg_tunnel_result[wg_tunnel_name].hosts[wg_inventory_host]}}"
+        - name: Combine output with wg_tunnel_result
+          set_fact:
+            wg_tunnel_result: >
+              {{ wg_tunnel_result |
+              combine( { wg_tunnel_name: {'hosts': {wg_inventory_host: wg_tunnel_result[wg_tunnel_name].hosts[wg_inventory_host] |
+              combine( { 'output': output }) } } }, recursive=true ) }}
+
+      module_defaults:
+        group/community.routeros.api:
+          hostname: "{{ hostvars[wg_inventory_host].ansible_host }}"
+          password: "{{ hostvars[wg_inventory_host].ansible_ssh_pass }}"
+          username: "{{ hostvars[wg_inventory_host].ansible_ssh_user }}"
+          tls: false
+          validate_certs: false
+          validate_cert_hostname: false
+#        community.routeros.command:
+#          hostname: "{{ hostvars[wg_inventory_host].ansible_host }}"
+#          password: "{{ hostvars[wg_inventory_host].ansible_ssh_pass }}"
+#          username: "{{ hostvars[wg_inventory_host].ansible_ssh_user }}"
+#          tls: false
+#          validate_certs: false
+#          validate_cert_hostname: false
+
+      delegate_to: localhost
+      when:
+        - hostvars[wg_inventory_host].ansible_network_os is defined and hostvars[wg_inventory_host].ansible_network_os == 'community.routeros.routeros'
+
+
+    - name: "Provision linux {{wg_inventory_host}}"
+      block:
+        - set_fact:
+            wg_tunnel_result: "{{ wg_tunnel_result | combine({wg_tunnel_name: {'hosts': {wg_inventory_host: {'compose_file': wg_compose_file} } } }, recursive=true) }}"
+        - include_tasks: docker/main.yml
+          vars:
+            wg_interface: "{{wg_tunnel_result[wg_tunnel_name].hosts[wg_inventory_host]}}"
+      delegate_to: "{{wg_inventory_host}}"
+      ignore_unreachable: true
+      rescue:
+        - name: "Retry Linux provision for {{wg_inventory_host}} after 30 seconds"
+          pause:
+            seconds: 30
+          delegate_to: localhost
+
+        - name: "Retry provision linux {{wg_inventory_host}} (attempt 2)"
+          block:
+            - set_fact:
+                wg_tunnel_result: "{{ wg_tunnel_result | combine({wg_tunnel_name: {'hosts': {wg_inventory_host: {'compose_file': wg_compose_file} } } }, recursive=true) }}"
+            - include_tasks: docker/main.yml
+              vars:
+                wg_interface: "{{wg_tunnel_result[wg_tunnel_name].hosts[wg_inventory_host]}}"
+          delegate_to: "{{wg_inventory_host}}"
+          ignore_unreachable: true
+
+      when:
+        - hostvars[wg_inventory_host].ansible_network_os is not defined
+
+    - set_fact:
+        wg_interface: null
+

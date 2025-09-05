@@ -1,0 +1,124 @@
+services:
+  caddy:
+    restart: always
+    image: caddy:2
+    volumes:
+      - ./caddy:/data/caddy
+    # See Caddy's documentation for customizing this line
+    # https://caddyserver.com/docs/quick-starts/reverse-proxy
+    command:
+      - /bin/sh
+      - -c
+      - |
+          cat <<EOF > /etc/caddy/Caddyfile && cd /etc/caddy/ && caddy fmt --overwrite  && caddy run --config /etc/caddy/Caddyfile
+
+          {{ fz_server_url }} {
+            log
+            reverse_proxy * firezone:13000
+          }
+          EOF
+    networks:
+      firezone-network:
+    ports:
+      - 80:80
+      - 443:443
+    healthcheck:
+      test:  ["CMD-SHELL", "wget -q http://127.0.0.1:2019/reverse_proxy/upstreams -O /dev/null"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+      start_period: 10s
+    depends_on:
+      - firezone
+
+  firezone:
+    restart: always
+    #lot of breaking changes. need to specify version manually
+    image: firezone/firezone:0.7.30
+    ports:
+      - {{fz_wireguard_port}}:{{fz_wireguard_port}}/udp
+{% if firezone_addon_ports is defined %}
+{% for port in firezone_addon_ports %}
+      - {{port}}
+{% endfor %}
+{% endif %}
+    env_file:
+      # This should contain a list of env vars for configuring Firezone.
+      # See https://docs.firezone.dev/reference/env-vars for more info.
+      - ./.env
+    volumes:
+      # IMPORTANT: Persists WireGuard private key and other data. If
+      # /var/firezone/private_key exists when Firezone starts, it is
+      # used as the WireGuard private. Otherwise, one is generated.
+      - ./firezone:/var/firezone
+    cap_add:
+      # Needed for WireGuard and firewall support.
+      - NET_ADMIN
+      - SYS_MODULE
+    sysctls:
+      # Needed for masquerading and NAT.
+      - net.ipv6.conf.all.disable_ipv6=0
+      - net.ipv4.ip_forward=1
+      - net.ipv6.conf.all.forwarding=1
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      firezone-network:
+    healthcheck:
+      test:  ["CMD-SHELL", "wget -q http://127.0.0.1:13000/ -O /dev/null"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+      start_period: 10s
+    labels: {{ fz_custom_labels | default('[]') }}
+  postgres:
+    restart: always
+    image: postgres:15
+    volumes:
+      - ./postgres-data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: firezone
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD}
+    healthcheck:
+      test: [ "CMD-SHELL", "/usr/bin/pg_isready -Upostgres" ]
+      interval: 30s
+      timeout: 10s
+      retries: 20
+      start_period: 20s
+    networks:
+      - firezone-network
+  conntrack-log:
+    restart: always
+    build: ./conntrack_log
+    network_mode: service:firezone
+    depends_on:
+      firezone:
+        condition: service_healthy
+        restart: true
+    cap_add:
+      - NET_ADMIN
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "512m"
+        max-file: "3"
+
+  autoheal:
+    restart: always
+    image: willfarrell/autoheal
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - "AUTOHEAL_CONTAINER_LABEL=all"
+
+
+networks:
+  firezone-network:
+    driver: bridge
+{%if fz_mgmt_subnet is defined and fz_mgmt_subnet %}
+    ipam:
+      config:
+        - subnet: {{ fz_mgmt_subnet }}
+{% endif %}
