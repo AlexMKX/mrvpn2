@@ -6,13 +6,10 @@ incoming:
 recursor:
   extended_resolution_errors: true
   lua_dns_script: /etc/powerdns/hook.lua
-
-recordcache:
   max_negative_ttl: 300     # было 3600
-
-packetcache:
   ttl: 60                    # общий TTL для packet cache
   negative_ttl: 30           # отрицательные ответы в packet cache
+  
 #logging:
 #  loglevel: 7
 #  trace: yes

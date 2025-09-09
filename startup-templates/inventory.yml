@@ -1,0 +1,26 @@
+﻿---
+all:
+  hosts:
+    "{{ lookup('env', 'VPN_MAIN_HOST') | default('vpn-main', true) }}":
+      ansible_host: "{{ lookup('env', 'VPN_MAIN_IP') | default('YOUR_MAIN_SERVER_IP', true) }}"
+      ansible_user: "{{ lookup('env', 'ANSIBLE_USER') | default('root', true) }}"
+      ansible_private_key_file: "~/.ssh/id_rsa"
+      ansible_ssh_common_args: "-o PasswordAuthentication=no -o PubkeyAuthentication=yes -o IdentitiesOnly=yes -o ConnectTimeout=30"
+      ansible_host_key_checking: false
+      ansible_ssh_retries: 3
+      ansible_python_interpreter: "/usr/bin/python3"
+    "{{ lookup('env', 'VPN_EXIT_HOST') | default('vpn-exit', true) }}":
+      ansible_host: "{{ lookup('env', 'VPN_EXIT_IP') | default('YOUR_EXIT_SERVER_IP', true) }}"
+      ansible_user: "{{ lookup('env', 'ANSIBLE_USER') | default('root', true) }}"
+      ansible_private_key_file: "~/.ssh/id_rsa"
+      ansible_ssh_common_args: "-o PasswordAuthentication=no -o PubkeyAuthentication=yes -o IdentitiesOnly=yes -o ConnectTimeout=30"
+      ansible_host_key_checking: false
+      ansible_ssh_retries: 3
+      ansible_python_interpreter: "/usr/bin/python3"
+  children:
+    entrypoints:
+      hosts:
+        "{{ lookup('env', 'VPN_MAIN_HOST') | default('vpn-main', true) }}":
+    exitnodes:
+      hosts:
+        "{{ lookup('env', 'VPN_EXIT_HOST') | default('vpn-exit', true) }}":

@@ -1,3 +1,9 @@
+"""
+Docker Compose Patching Module
+This module patches Docker Compose files by merging service configurations,
+handling network mode dependencies, and managing port mappings between services.
+"""
+
 from ansible.module_utils.basic import AnsibleModule
 
 

@@ -1,0 +1,95 @@
+---
+# MRVPN2 Topology Configuration (MVP)
+# Configuration for VPN infrastructure deployment
+# Core components only: Firezone + WireGuard
+
+mrvpn_config:
+  entrypoint: "{{ lookup('env', 'VPN_MAIN_HOST') | default('vpn.example.com', true) }}"
+  mrvpn_base_dir: /opt
+  tunnels:
+    wg_exit1:
+      subnet: "10.10.10.0/24"
+      hosts:
+        "{{ lookup('env', 'VPN_MAIN_HOST') | default('vpn.example.com', true) }}":
+          allowed_nets: [ 0.0.0.0/0 ]
+          compose_service: firezone
+          masquerade: true
+          table: "off"
+        "{{ lookup('env', 'VPN_EXIT_HOST') | default('exit.example.com', true) }}":
+          expose: 51620
+          allowed_nets: [ 0.0.0.0/0 ]
+          masquerade: true
+          table: "off"
+    wg_internal:
+      subnet: "192.168.100.0/24"
+      hosts:
+        "{{ lookup('env', 'VPN_MAIN_HOST') | default('vpn.example.com', true) }}":
+          allowed_nets: ["192.168.100.0/24", "10.0.100.0/24"]
+          compose_service: internal
+          masquerade: false
+          table: "off"
+  routing:
+    routes:
+      - interface: wg_exit1
+        metric: 300
+        static:
+          - 0.0.0.0/0
+      - interface: wg_internal
+        metric: 100
+        static:
+          - 192.168.100.0/24
+      - interface: _DEFAULT
+        metric: 100
+        domains:
+          - .*\.local
+          - .*\.internal
+    pbr_mark: 200
+    table: 200
+    interfaces:
+      - wg-firezone
+      - wg_exit1
+      - wg_internal
+  services:
+    firezone:
+      - wg-firezone
+      - wg_exit1
+      - wg_internal
+  firezone:
+    fz_server_url: "{{ lookup('env', 'FZ_SERVER_URL') | default('https://vpn.example.com', true) }}"
+    fz_client_subnet: 10.0.100.0/24
+    fz_client_gateway: 10.0.100.1
+    # Admin email for Firezone
+    fz_admin: "{{ lookup('env', 'FZ_ADMIN_EMAIL') | default('admin@example.com', true) }}"
+    # Admin password: must be set in CI/CD Variables
+    fz_admin_password: "{{ lookup('env', 'FZ_ADMIN_PASS') }}"
+    # WireGuard port for Firezone
+    fz_wireguard_port: "{{ lookup('env', 'FZ_WIREGUARD_PORT') | default('51620', true) }}"
+    fz_client_allowed_subnets:
+      - "192.168.100.0/24"
+
+    # OIDC Configuration for external providers
+    fz_oidc:
+      yandex:
+        client_id: "{{ lookup('env', 'YANDEX_CLIENT_ID') | default('', true) }}"
+        client_secret: "{{ lookup('env', 'YANDEX_CLIENT_SECRET') | default('', true) }}"
+        # Custom discovery document for Yandex
+        discovery_document_uri: "{{ lookup('env', 'FZ_SERVER_URL') | default('https://vpn.example.com', true) }}/.well-known/yandex-openid-configuration.json"
+        scope: "login:email"
+        response_type: "code"
+        # Yandex OAuth attributes - email authentication only
+        identifier_attribute: "login"
+        email_attribute: "default_email"
+        # Domain restriction for email addresses
+        allowed_domains: "{{ lookup('env', 'ALLOWED_DOMAINS') | default(['example.com'], true) }}"
+        # Specific allowed email addresses (whitelist)
+        allowed_emails: "{{ lookup('env', 'ALLOWED_EMAILS') | default([], true) }}"
+        enabled: "{{ (lookup('env', 'YANDEX_CLIENT_ID') | length > 0) and (lookup('env', 'YANDEX_CLIENT_SECRET') | length > 0) }}"
+      zitadel:
+        client_id: "{{ lookup('env', 'ZITADEL_CLIENT_ID') | default('', true) }}"
+        client_secret: "{{ lookup('env', 'ZITADEL_CLIENT_SECRET') | default('', true) }}"
+        discovery_document_uri: "http://localhost:8080/.well-known/openid-configuration"
+        scope: "openid email profile"
+        response_type: "code"
+        allowed_domains: "{{ lookup('env', 'ALLOWED_DOMAINS') | default(['example.com'], true) }}"
+        allowed_emails: "{{ lookup('env', 'ALLOWED_EMAILS') | default([], true) }}"
+        enabled: "{{ lookup('env', 'ZITADEL_ENABLED') | default(false, true) }}"

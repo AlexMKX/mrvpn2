@@ -1,3 +1,4 @@
+---
 # Description: This playbook is responsible for creating the compose service files for the mrvpn services (ipt, pdns, frr)
 # inputs: mrvpn_config, svcs, mrvpn_root
 # outputs: compose_svc_files - contain list of compose files to include
@@ -24,29 +25,43 @@
   copy:
     src: "{{item}}"
     dest: "{{mrvpn_svcs_root}}/"
-
   with_items:
     - "files/powerdns"
     - "files/ipt-server"
     - "files/frr"
+  when: not ansible_check_mode
 
-- copy:
+- name: Write ipt-server config file
+  copy:
     content: "{{mrvpn_config['routing'] | to_yaml}}"
     dest: "{{mrvpn_svcs_root}}/ipt-server-config.yml"
-  register: ipt_server_config_file
+    register: ipt_server_config_file
+    when: not ansible_check_mode
 
-- template:
+- name: Write FRR config file
+  template:
     src: "templates/frr.conf.j2"
     dest: "{{mrvpn_svcs_root}}/frr/frr.conf"
+  when: not ansible_check_mode
 
-- copy:
+- name: Write compose service files
+  copy:
     content: "{{lookup ('template','templates/compose_svc.yml.j2') }}"
     dest: "{{mrvpn_svcs_root}}/compose_{{item.key}}_svc.yml"
   with_dict: "{{mrvpn_config['services']}}"
-
-
+  when: not ansible_check_mode
 
 - name: Create list of compose service file paths
   set_fact:
     cacheable: no
     compose_svcs_files: "{{ mrvpn_config['services'].keys() | map('regex_replace', '^(.*)$', mrvpn_svcs_root + '/compose_\\1_svc.yml') | list }}"
+
+- name: Create main compose file with includes
+  copy:
+    content: |
+      include:
+      {% for svc_file in compose_svcs_files %}
+        - path: {{ svc_file | relpath(mrvpn_svcs_root) }}
+      {% endfor %}
+    dest: "{{ mrvpn_svcs_root }}/docker-compose.yml"
+  when: compose_svcs_files is defined and compose_svcs_files | length > 0

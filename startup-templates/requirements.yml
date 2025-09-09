@@ -1,0 +1,20 @@
+---
+# Ansible Collections and Roles Requirements
+# This file defines required Ansible collections and roles for MRVPN2 infrastructure deployment,
+# including Docker management, general utilities, cryptography, and networking modules.
+
+collections:
+  - name: community.docker
+    version: "4.7.0"
+  - name: community.general
+    version: "10.7.3"
+  - name: community.crypto
+    version: "2.26.5"
+  - name: ansible.utils
+    version: "6.0.0"
+  - name: ansible.netcommon
+    version: "7.2.0"
+
+roles:
+  - name: geerlingguy.docker
+    version: "7.5.0"

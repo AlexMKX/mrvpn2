@@ -1,0 +1,21 @@
+# Zitadel initialization steps for external OIDC provider proxy
+# This template configures Zitadel to act as an OIDC proxy for external identity providers
+# Replace the placeholder values with your actual OIDC provider configuration
+
+- file:
+    path: zitadel-init-steps.yaml
+    contents: |
+      # Create external OIDC Identity Provider
+      # Configure your OIDC provider details below
+      - api_call:
+          path: /admin/v1/idps/oidc
+          method: POST
+          body:
+            name: "{{ oidc_provider_name | default('External OIDC Provider', true) }}"
+            issuer: "{{ oidc_issuer_url | default('https://your-oidc-provider.com', true) }}"
+            client_id: "{{ lookup('env', 'OIDC_CLIENT_ID') | default('your-client-id', true) }}"
+            client_secret: "{{ lookup('env', 'OIDC_CLIENT_SECRET') | default('your-client-secret', true) }}"
+            scopes: ["{{ oidc_scopes | default('openid email', true) }}"]
+            authorization_endpoint: "{{ oidc_auth_endpoint | default('https://your-oidc-provider.com/authorize', true) }}"
+            token_endpoint: "{{ oidc_token_endpoint | default('https://your-oidc-provider.com/token', true) }}"
+            userinfo_endpoint: "{{ oidc_userinfo_endpoint | default('https://your-oidc-provider.com/userinfo', true) }}"

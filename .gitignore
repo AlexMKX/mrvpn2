@@ -1,2 +1,16 @@
 /dev/
 **/__pycache__/
+
+# Environment variables
+.env
+
+# Ansible
+*.retry
+.ansible/
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp

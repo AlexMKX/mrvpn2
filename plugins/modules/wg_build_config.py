@@ -1,4 +1,11 @@
 #!/usr/bin/python
+"""
+WireGuard Configuration Builder Module
+This module creates mesh WireGuard configurations where all peers connect to each other,
+generating private/public keys, setting up peer configurations, and handling network addressing.
+Supports various configuration options including expose settings, allowed networks, and routing.
+"""
+
 import logging
 
 ANSIBLE_METADATA = {
@@ -58,16 +65,16 @@ hostvars:
     - Required if any host's 'expose' is specified as just a port (string or integer) to infer the host IP.
   required: false
   type: dict
-quirements:
+requirements:
 - python >= 3.6
 - wireguard-tools
-tes:
+notes:
 - This module requires the 'wg' command to be available on the system for generating keys.
 - The module uses the subprocess module to execute shell commands, ensure proper permissions are set.
 - When specifying 'expose' for a host, you have several options:
-  1. Full specification: "IP:PORT" (e.g., "203.0.113.1:51820")
-  2. Port only as string: "PORT" (e.g., "51820")
-  3. Port only as integer: 51820
+  1. Full specification: "IP:PORT" (e.g., "203.0.113.1:51620")
+  2. Port only as string: "PORT" (e.g., "51620")
+  3. Port only as integer: 51620
 - If specifying only a port (options 2 or 3), you must provide the 'hostvars' parameter so the module can infer the host IP from 'ansible_host'.
 - If 'expose' is not specified for a host, that host will not be exposed and will only act as a client in the WireGuard network.
 seealso:
@@ -86,7 +93,7 @@ EXAMPLES = '''
       subnet: "10.8.19.0/24"
       hosts:
         host1:
-          expose: "203.0.113.1:51820"  # Full IP:PORT specification
+          expose: "203.0.113.1:51620"  # Full IP:PORT specification
         host2:
           expose: "51821"  # Port only as string, IP will be inferred from hostvars
         host3:
@@ -179,7 +186,7 @@ def gen_psk() -> str:
     :return: The generated preshared key as a string.
     """
     import subprocess
-    return subprocess.run("wg genpsk", shell=True, capture_output=True, text=True).stdout.rstrip()
+    return subprocess.run("wg genpsk", shell=True, capture_output=True, text=True, check=True).stdout.rstrip()
 
 
 def build_config(tunnel: dict, hostvars: dict) -> dict:
@@ -206,11 +213,11 @@ def build_config(tunnel: dict, hostvars: dict) -> dict:
         wg_config['address'] = str(ipaddress.ip_network(tunnel['subnet']).network_address + host_num)
         # generate private and public keys
         if 'private' not in hv:
-            private = subprocess.run("wg genkey", shell=True, capture_output=True, text=True).stdout.rstrip()
+            private = subprocess.run("wg genkey", shell=True, capture_output=True, text=True, check=True).stdout.rstrip()
         else:
             private = hv['private'].rstrip()
-        public = subprocess.run("echo " + private + " | wg pubkey", shell=True, capture_output=True,
-                                text=True).stdout.rstrip()
+
+        public = subprocess.run(f"echo '{private}' | wg pubkey", shell=True, capture_output=True, text=True, check=True).stdout.rstrip()
         wg_config['private'] = private
         wg_config['public'] = public
         if "expose" in hv:
@@ -298,17 +305,25 @@ def main():
 
     tunnel = ansible.params['tunnel']
     hostvars = ansible.params.get('hostvars', {})
+    
+    # Input validation
+    if not isinstance(tunnel, dict) or not tunnel:
+        ansible.fail_json(msg="Tunnel configuration must be a non-empty dictionary")
+        
+    if 'subnet' not in tunnel:
+        ansible.fail_json(msg="Tunnel configuration must include 'subnet' key")
+        
+    if 'hosts' not in tunnel or not tunnel['hosts']:
+        ansible.fail_json(msg="Tunnel configuration must include non-empty 'hosts' key")
+    
     try:
+        import subprocess
         ansible_result = dict(
             status=200,
             changed=True,
             result=build_config(tunnel, hostvars))
     except Exception as e:
-        import traceback
-        ansible_result = ansible.fail_json(msg=str(e),
-                                           status=400,
-                                           result={},
-                                           exception=traceback.format_exc())
+        ansible.fail_json(msg=str(e))
 
     ansible.exit_json(**ansible_result)
 
