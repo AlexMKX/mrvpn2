@@ -184,18 +184,9 @@ def gen_psk() -> str:
     Generate a preshared key (PSK) using the WireGuard utility.
 
     :return: The generated preshared key as a string.
-    :raises: subprocess.CalledProcessError if wg command fails
     """
     import subprocess
-    try:
-        result = subprocess.run("wg genpsk", shell=True, capture_output=True, text=True, check=True, timeout=30)
-        return result.stdout.rstrip()
-    except subprocess.TimeoutExpired:
-        raise Exception("WireGuard key generation timed out after 30 seconds")
-    except subprocess.CalledProcessError as e:
-        raise Exception(f"WireGuard key generation failed: {e.stderr}")
-    except FileNotFoundError:
-        raise Exception("WireGuard tools not found. Please install wireguard-tools package.")
+    return subprocess.run("wg genpsk", shell=True, capture_output=True, text=True, check=True).stdout.rstrip()
 
 
 def build_config(tunnel: dict, hostvars: dict) -> dict:
@@ -222,23 +213,11 @@ def build_config(tunnel: dict, hostvars: dict) -> dict:
         wg_config['address'] = str(ipaddress.ip_network(tunnel['subnet']).network_address + host_num)
         # generate private and public keys
         if 'private' not in hv:
-            try:
-                private_result = subprocess.run("wg genkey", shell=True, capture_output=True, text=True, check=True, timeout=30)
-                private = private_result.stdout.rstrip()
-            except subprocess.CalledProcessError as e:
-                raise Exception(f"Failed to generate private key for host {hk}: {e.stderr}")
-            except subprocess.TimeoutExpired:
-                raise Exception(f"Private key generation timed out for host {hk}")
+            private = subprocess.run("wg genkey", shell=True, capture_output=True, text=True, check=True).stdout.rstrip()
         else:
             private = hv['private'].rstrip()
-            
-        try:
-            public_result = subprocess.run(f"echo '{private}' | wg pubkey", shell=True, capture_output=True, text=True, check=True, timeout=30)
-            public = public_result.stdout.rstrip()
-        except subprocess.CalledProcessError as e:
-            raise Exception(f"Failed to generate public key for host {hk}: {e.stderr}")
-        except subprocess.TimeoutExpired:
-            raise Exception(f"Public key generation timed out for host {hk}")
+
+        public = subprocess.run(f"echo '{private}' | wg pubkey", shell=True, capture_output=True, text=True, check=True).stdout.rstrip()
         wg_config['private'] = private
         wg_config['public'] = public
         if "expose" in hv:
@@ -343,23 +322,8 @@ def main():
             status=200,
             changed=True,
             result=build_config(tunnel, hostvars))
-    except ValueError as ve:
-        ansible.fail_json(msg=f"Configuration validation error: {str(ve)}", 
-                         status=422)
-    except subprocess.CalledProcessError as cpe:
-        ansible.fail_json(msg=f"WireGuard command execution failed: {str(cpe)}", 
-                         status=500)
-    except subprocess.TimeoutExpired as te:
-        ansible.fail_json(msg=f"WireGuard command timed out: {str(te)}", 
-                         status=504)
-    except FileNotFoundError as fnfe:
-        ansible.fail_json(msg=f"Required tool not found: {str(fnfe)}", 
-                         status=404)
     except Exception as e:
-        import traceback
-        ansible.fail_json(msg=f"Unexpected error during WireGuard config generation: {str(e)}",
-                         status=500,
-                         exception=traceback.format_exc())
+        ansible.fail_json(msg=str(e))
 
     ansible.exit_json(**ansible_result)
 

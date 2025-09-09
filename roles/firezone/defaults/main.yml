@@ -13,7 +13,7 @@ fz_cleanup: false
 fz_oidc: "{{fz_config['fz_oidc'] | default (undef())}}"
 firezone_addon_ports: "{{fz_config['firezone_addon_ports'] | default ([])}}"
 fz_admin: "{{fz_config['fz_admin'] | default ('admin@example.com')}}"
-fz_admin_password: "{{fz_config['fz_admin_password']}}"
+fz_admin_password: "{{fz_config['fz_admin_password'] | default (lookup('ansible.builtin.password', length=12, chars='ascii_letters,digits'))}}"
 fz_wireguard_port: "{{fz_config['fz_wireguard_port'] | default ('51620')}}"
 fz_server_url: "{{fz_config['fz_server_url'] | default ('https://localhost')}}"
 fz_firezone_dir: "{{fz_config['fz_firezone_dir'] | default ('/opt/firezone')}}"

@@ -78,11 +78,11 @@ services:
     volumes:
       - ./postgres-data:/var/lib/postgresql/data
     environment:
-      POSTGRES_DB: firezone
-      POSTGRES_USER: postgres
+      POSTGRES_DB: ${DATABASE_NAME:-firezone}
+      POSTGRES_USER: ${DATABASE_USER:-postgres}
       POSTGRES_PASSWORD: ${DATABASE_PASSWORD}
     healthcheck:
-      test: [ "CMD-SHELL", "/usr/bin/pg_isready -Upostgres" ]
+      test: [ "CMD-SHELL", "/usr/bin/pg_isready -U${DATABASE_USER:-postgres}" ]
       interval: 30s
       timeout: 10s
       retries: 20

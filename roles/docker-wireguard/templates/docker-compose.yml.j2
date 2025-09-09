@@ -41,15 +41,15 @@ services:
 
 {% endif %}
 
-#  {{wg_tunnel_name}}_frr:
-#    restart: always
-#    cap_add:
-#      - CAP_NET_RAW
-#      - NET_ADMIN
-#      - SYS_ADMIN
-#    privileged: false
-#    image: quay.io/frrouting/frr:9.1.0
-#    network_mode: "service:{{wg_tunnel_name}}"
-#    volumes:
-#      - {{wg_target_dir}}/frr:/etc/frr:rw
+  {{wg_tunnel_name}}_frr:
+    restart: always
+    cap_add:
+      - CAP_NET_RAW
+      - NET_ADMIN
+      - SYS_ADMIN
+    privileged: false
+    image: quay.io/frrouting/frr:9.1.0
+    network_mode: "service:{{wg_tunnel_name}}"
+    volumes:
+      - {{wg_target_dir}}/frr:/etc/frr:rw
 

@@ -8,12 +8,14 @@
 #   - wg-firezone
 #   - wg_outer
 
-- name: Assert required variables are defined
+- name: Assert mrvpn_config is not empty and has routing key
   assert:
     that:
-      - mrvpn_routing is defined
-      - mrvpn_services is defined
-    fail_msg: "mrvpn_routing and mrvpn_services must be defined"
+      - mrvpn_config is defined
+      - mrvpn_config | length > 0
+      - "'routing' in mrvpn_config"
+      - "'services' in mrvpn_config"
+    fail_msg: "mrvpn_config must be defined, non-empty, and contain a 'routing' and 'services' keys"
 - set_fact:
     cacheable: no
     mrvpn_svcs_root: "{{mrvpn_root}}/mrvpn"
@@ -31,10 +33,10 @@
 
 - name: Write ipt-server config file
   copy:
-    content: "{{mrvpn_routing | to_yaml}}"
+    content: "{{mrvpn_config['routing'] | to_yaml}}"
     dest: "{{mrvpn_svcs_root}}/ipt-server-config.yml"
-  register: ipt_server_config_file
-  when: not ansible_check_mode
+    register: ipt_server_config_file
+    when: not ansible_check_mode
 
 - name: Write FRR config file
   template:
@@ -46,13 +48,13 @@
   copy:
     content: "{{lookup ('template','templates/compose_svc.yml.j2') }}"
     dest: "{{mrvpn_svcs_root}}/compose_{{item.key}}_svc.yml"
-  with_dict: "{{mrvpn_services}}"
+  with_dict: "{{mrvpn_config['services']}}"
   when: not ansible_check_mode
 
 - name: Create list of compose service file paths
   set_fact:
     cacheable: no
-    compose_svcs_files: "{{ mrvpn_services.keys() | map('regex_replace', '^(.*)$', mrvpn_svcs_root + '/compose_\\1_svc.yml') | list }}"
+    compose_svcs_files: "{{ mrvpn_config['services'].keys() | map('regex_replace', '^(.*)$', mrvpn_svcs_root + '/compose_\\1_svc.yml') | list }}"
 
 - name: Create main compose file with includes
   copy:
