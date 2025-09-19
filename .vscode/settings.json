@@ -1,5 +1,6 @@
 {
     "files.associations": {
         "*.yaml": "home-assistant"
-    }
+    },
+    "ansible.python.interpreterPath": "/home/alex/PycharmProjects/mrvpn2/venv3.13/bin/python"
 }

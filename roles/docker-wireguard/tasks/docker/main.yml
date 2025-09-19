@@ -5,6 +5,25 @@
     mode: 0755
     recurse: yes
 
+- file:
+    path: "{{wg_target_dir}}/peers"
+    state: directory
+    mode: 0755
+    recurse: yes
+
+- file:
+    path: "{{wg_target_dir}}/interface"
+    state: directory
+    mode: 0755
+    recurse: yes
+
+- file:
+    path: "{{wg_target_dir}}/frr"
+    state: directory
+    mode: 0755
+    recurse: yes
+
+
 - debug:
     msg: "target dir {{wg_target_dir}}"
 - copy:
